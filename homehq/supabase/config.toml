@@ -1,0 +1,71 @@
+# This is a new personal Home HQ project. It never links to the conference fleet.
+project_id = "homehq"
+
+[api]
+enabled = true
+schemas = ["public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 100
+
+[db]
+major_version = 17
+health_timeout = "2m"
+
+[db.migrations]
+enabled = true
+# pg-delta resolves SQL dependencies; legacy schema_paths would be ignored.
+
+[db.seed]
+enabled = true
+sql_paths = ["./seed.sql"]
+
+[realtime]
+enabled = true
+
+[studio]
+enabled = true
+
+[local_smtp]
+enabled = true
+
+[storage]
+enabled = true
+file_size_limit = "2MiB"
+
+[storage.buckets.homehq-photos]
+public = false
+file_size_limit = "2MiB"
+allowed_mime_types = ["image/png", "image/jpeg"]
+
+[auth]
+enabled = true
+site_url = "http://localhost:5173"
+additional_redirect_urls = ["http://localhost:5173", "http://127.0.0.1:5173"]
+jwt_expiry = 3600
+enable_refresh_token_rotation = true
+refresh_token_reuse_interval = 10
+enable_signup = true
+enable_anonymous_sign_ins = false
+minimum_password_length = 8
+
+[auth.email]
+enable_signup = true
+# The local companion can be tried without external SMTP. Hosted owners decide
+# whether to enable confirmations before sharing their own signup page.
+enable_confirmations = false
+double_confirm_changes = true
+
+[edge_runtime]
+enabled = false
+
+[analytics]
+enabled = false
+
+[experimental]
+# SELECT 2026's stack mode isolates roots/branches and supports native services.
+# Ports are deliberately absent so a second worktree does not collide with this one.
+stack = true
+
+[experimental.pgdelta]
+enabled = true
+declarative_schema_path = "./schemas"
