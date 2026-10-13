@@ -40,9 +40,23 @@ prepared photos stay in this browser’s local storage. Settings → Reset
 demo restores the original example. Its labelled demo clock starts at 3:18 PM so
 the Piano lesson scenario is always available.
 
-For live mode, first apply the setup under `../supabase/`. Copy `.env.example` to
-the ignored `.env.local` and supply your project URL and **publishable** API key;
-or enter those values in Settings. Choose Edit household and sign in or create an account in Settings.
+For live mode, first apply the setup under `../supabase/`, then configure the
+project once in this application's environment:
+
+```sh
+cp .env.example .env.local
+```
+
+Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` in `.env.local`,
+then run `npm run dev`. For a production deployment, supply those variables in
+the build environment before `npm run build`. Vite bundles the public client
+configuration using its [standard environment handling](https://vite.dev/guide/env-and-mode).
+Restart Vite after changing an environment file. An incomplete/invalid
+configuration reports an app setup error instead of silently loading mock data.
+Old `homehq.connection.v1` browser settings are ignored.
+
+Choose Edit household and sign in with email/password. Users do not enter or
+save the project URL/key. Auth session persistence stays with supabase-js.
 Email confirmation follows your project’s normal Auth settings. The first sign-in
 calls `homehq_seed_demo(false)`; it preserves an existing home and resolves a
 linked member to the shared household. The owner sets up member logins in Settings
@@ -67,27 +81,28 @@ that asynchronous refresh completes; versioned writes still detect conflicts.
 The **Live sync** label reports this editor's own subscription, not the physical
 badge's Wi-Fi state.
 
-The browser uses a publishable key plus the signed-in member’s Auth session. Secret
-and service-role keys never belong in browser configuration. Settings rejects their
-known shapes. Browser-stored connection details contain the public project key.
+The browser uses the build's public publishable key plus the signed-in member's
+normal Auth session. URL/key configuration is never saved by the browser UI.
+Secret and service-role keys are rejected and never belong in `VITE_` variables.
+Sign-in, refresh and recovery reuse one client and its Auth listener.
 
 ## Run against your hosted project
 
 After deploying a Home HQ project using the [backend guide](../backend-README.md),
-run from the repository/starter root:
+set the two variables above in `homehq/web/.env.local`, then run:
 
 ```sh
 npm --prefix homehq/web ci
-python3 homehq/tools/companion.py --url https://YOUR_PROJECT.supabase.co --key-file /absolute/path/publishable-key.txt
+npm --prefix homehq/web run dev -- --port 5191 --strictPort
 ```
 
-The key file contains only the publishable/legacy anon key, not metadata JSON or
-a service-role key. `--url` selects the hosted project; otherwise the helper uses
-this checkout's private local metadata. `--key-file` requires `--url`; omitting
-the file uses `HOMEHQ_PUBLISHABLE_KEY`. Add `--port 5191` to choose another port.
-The helper writes only URL/public key to ignored `.env.local`, binds the editor
-to `127.0.0.1`, and performs no deployment. Open Settings and sign into the same
-household member account using the browser's independent session.
+Open `/editor.html?settings=1` to sign in. The URL and public key are application
+configuration; each browser/device has its own ordinary Auth session.
+
+The optional `homehq/tools/companion.py` helper can populate the same ignored
+`.env.local` from CLI/local-stack metadata or a hosted `--url`/`--key-file`.
+It is an operator convenience, not a browser configuration mechanism. Normal
+Vite dev/build commands work directly without it.
 
 ## The data flow
 
@@ -137,14 +152,26 @@ npm run build
 npm run test:e2e
 ```
 
-The browser tests cover the original display plus the retained editor and expect the preview at `http://127.0.0.1:5184`; start it with
-`npm run dev -- --port 5184 --strictPort`, or set `HOMEHQ_WEB_URL`.
+The browser tests use two local Vite servers so the public prototype and an
+environment-configured app are tested separately. Start these in separate
+terminals from this directory, then run `npm run test:e2e`:
+
+```sh
+VITE_SUPABASE_URL= VITE_SUPABASE_PUBLISHABLE_KEY= npm run dev -- --port 5184 --strictPort
+VITE_SUPABASE_URL=https://reload-test.supabase.co VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_test_only npm run dev -- --port 5185 --strictPort
+```
+
+The configured tests intercept every Auth/RPC/Storage/WebSocket request; the
+synthetic key is not a real project credential. `HOMEHQ_WEB_URL` and
+`HOMEHQ_CONFIGURED_WEB_URL` can override those test URLs.
 Demo tests cover family/event edits, versioned checkbox intent and Undo, shared-chore
 attribution, shopping, confirmed sample controls, real PNG preprocessing and phone
 overflow. Screenshots are written under ignored `test-results/`.
 
 Live tests run only against an explicitly supplied **disposable local** project:
-set `HOMEHQ_TEST_URL` and `HOMEHQ_TEST_KEY` (its publishable key), or set
+run a separate Vite server with that local project’s environment configuration,
+then set `HOMEHQ_LIVE_WEB_URL` to its origin and `HOMEHQ_TEST_URL`/`HOMEHQ_TEST_KEY`
+(its publishable key), or set
 `HOMEHQ_LOCAL_ENV_FILE` to the local helper’s private JSON metadata file. They create
 their own test accounts, exercise independent same-owner sessions and Realtime,
 and check another owner cannot read/update rows or join the first owner’s channel.

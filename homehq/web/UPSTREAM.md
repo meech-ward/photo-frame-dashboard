@@ -25,7 +25,7 @@ shell's views. The original typography, stylesheet rules, view renderers,
 slideshow layouts, navigation and demo data stay in the vendored files.
 
 Our additions live outside `upstream/`: `src/upstream.ts` is the Supabase adapter.
-The existing `src/backend.ts` client, account/project setup, household editing
+The existing `src/backend.ts` client, account setup, household editing
 and private photo upload remain in the companion at `editor.html`. The badge
 still uses its native MicroPython UI and cooperative networking; a browser
 frontend is not a badge executable. All live clients use the same Home HQ schema
@@ -108,3 +108,7 @@ The original `App.esc` escapes `&`, `<`, `>` and double quotes, but several
 prototype labels are inserted directly into HTML. Treat live text, identifiers,
 colours and image URLs as untrusted at the adapter boundary. Do not assume every
 original renderer escapes a field simply because neighbouring fields do.
+
+Supabase project configuration comes only from the two Vite environment
+variables documented in README.md; login asks for email/password. Browser-saved
+project selection is removed. The original remains vanilla JavaScript/Vite.

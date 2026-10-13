@@ -4,7 +4,7 @@ import '../upstream/js/main.js';
 import './upstream.css';
 import { HomeHQBackend, loadConfig, type LiveStatus } from './backend';
 import { householdDate, projectSnapshot, type OriginalSamples } from './upstream-data';
-import type { Snapshot, Chore, Shopping, Device } from './types';
+import type { Snapshot, Chore, Shopping, Device, Config } from './types';
 
 // This seam deliberately describes the upstream's dynamic globals rather than
 // translating its renderer into another implementation.
@@ -12,7 +12,10 @@ declare global { interface Window { App: any; DATA: any } }
 const app = window.App;
 const data = window.DATA;
 const samples: OriginalSamples = JSON.parse(JSON.stringify(data));
-const config = loadConfig();
+let config: Config | null = null;
+let configurationError = '';
+try { config = loadConfig(); }
+catch (error) { configurationError = error instanceof Error ? error.message : String(error); }
 const gate = document.querySelector<HTMLDivElement>('#homehq-gate')!;
 const gateMessage = document.querySelector<HTMLParagraphElement>('#homehq-gate-message')!;
 const statusLabel = document.querySelector<HTMLSpanElement>('#homehq-status')!;
@@ -30,16 +33,16 @@ const originalSlideStart = app.Slideshow.prototype.start;
 const originalStart = app.start;
 app.start = () => {
   // A configured dashboard has no local household to show before Auth resolves.
-  if (started || (config && !snapshot)) return;
+  if (started || configurationError || (config && !snapshot)) return;
   originalStart();
 };
 
 function renderStatus(error = ''): void {
-  gate.hidden = !config || !!snapshot;
+  gate.hidden = !configurationError && (!config || !!snapshot);
   document.querySelector<HTMLElement>('#stage')!.style.visibility = gate.hidden ? '' : 'hidden';
   const name = snapshot?.people.find((p) => p.id === snapshot?.viewer?.person_id)?.name;
-  statusLabel.textContent = !config ? 'Original prototype · local only' : status === 'signed-out' ? 'Sign in' : status === 'live' ? `Live sync${name ? ` · ${name}` : ''}` : snapshot ? 'Reconnecting' : 'Connecting';
-  gateMessage.textContent = error || (status === 'signed-out' ? 'Sign in with your family account to load your household.' : 'Connecting to your household.');
+  statusLabel.textContent = configurationError ? 'App configuration error' : !config ? 'Original prototype · local only' : status === 'signed-out' ? 'Sign in' : status === 'live' ? `Live sync${name ? ` · ${name}` : ''}` : snapshot ? 'Reconnecting' : 'Connecting';
+  gateMessage.textContent = configurationError || error || (status === 'signed-out' ? 'Sign in with your family account to load your household.' : 'Connecting to your household.');
   statusLabel.title = error;
 }
 

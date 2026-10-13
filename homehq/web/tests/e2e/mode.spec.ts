@@ -4,7 +4,7 @@ import type { Snapshot } from '../../src/types';
 
 const fixture = JSON.parse(readFileSync(new URL('../../src/demo-fixture.json', import.meta.url), 'utf8')) as Snapshot;
 
-test.use({ timezoneId: 'America/Los_Angeles' });
+test.use({ timezoneId: 'America/Los_Angeles', baseURL: process.env.HOMEHQ_CONFIGURED_WEB_URL || 'http://127.0.0.1:5185' });
 const project = 'https://reload-test.supabase.co';
 const authKey = 'homehq.auth.reload-test.supabase.co';
 const modeKey = 'homehq.mode.v1';
@@ -30,14 +30,13 @@ async function isolatedProject(page: Page, mode: 'demo' | 'live' | null, signedI
   if (options.snapshot !== 'held') releaseSnapshot();
   const expired = !!options.expired;
   await page.clock.setFixedTime(new Date(instant));
-  await page.addInitScript(({ project, authKey, modeKey, mode, signedIn, session, expired }) => {
+  await page.addInitScript(({ authKey, modeKey, mode, signedIn, session, expired }) => {
     if (localStorage.getItem('homehq.test.seeded')) return;
     localStorage.setItem('homehq.test.seeded', 'yes');
-    localStorage.setItem('homehq.connection.v1', JSON.stringify({ url: project, key: 'sb_publishable_test_only' }));
     if (mode) localStorage.setItem(modeKey, mode);
     if (!signedIn) return;
     localStorage.setItem(authKey, JSON.stringify(expired ? { ...session, expires_at: session.expires_at - 7200 } : session));
-  }, { project, authKey, modeKey, mode, signedIn, session, expired });
+  }, { authKey, modeKey, mode, signedIn, session, expired });
   // This browser context has a synthetic session and entirely intercepted
   // network. No test touches a user's real project, Auth identity or browser.
   await page.route(`${project}/**`, async (route) => {
@@ -101,8 +100,13 @@ async function expectNoLocalEditor(page: Page): Promise<void> {
   expect(await page.evaluate(() => localStorage.getItem('homehq.demo.v1'))).toBeNull();
 }
 
-test('a configured project ignores an old offline preference and restores live data on reload', async ({ page }) => {
+test('the environment project ignores legacy browser configuration and restores live data on reload', async ({ page }) => {
   await isolatedProject(page, 'demo', true);
+  await page.addInitScript(() => {
+    localStorage.setItem('homehq.connection.v1', JSON.stringify({ url: 'https://old-project.supabase.co', key: 'sb_publishable_old' }));
+  });
+  const legacyRequests: string[] = [];
+  await page.route('https://old-project.supabase.co/**', (route) => { legacyRequests.push(route.request().url()); return route.abort(); });
   await page.goto('/editor.html');
   await expect(page.locator('.family-lanes').getByText('Live owner', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Offline demo', exact: true })).toHaveCount(0);
@@ -113,8 +117,9 @@ test('a configured project ignores an old offline preference and restores live d
   // afternoon. The clock and its greeting must describe the same instant.
   await expect(page.getByText('Good morning, home.', { exact: true })).toBeVisible();
   await expect(page.locator('.big-clock')).toContainText('9:30');
+  expect(legacyRequests).toEqual([]);
 
-  await page.getByRole('button', { name: 'Project and account settings' }).click();
+  await page.getByRole('button', { name: 'Account settings' }).click();
   for (const name of ['Open my project', 'Open offline demo', 'Reset demo']) {
     await expect(page.getByRole('dialog').getByRole('button', { name, exact: true })).toHaveCount(0);
   }
@@ -129,7 +134,7 @@ test('a member uses the shared home channel, saves there, and receives their own
   expect(mock.topics).not.toContain(`realtime:homehq:${claims.sub}`);
   await page.getByRole('button', { name: 'Chores', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Claudia', exact: true })).toHaveClass(/on/);
-  await page.getByRole('button', { name: 'Project and account settings' }).click();
+  await page.getByRole('button', { name: 'Account settings' }).click();
   await expect(page.getByRole('dialog')).toContainText('Signed in as Claudia');
   await expect(page.getByRole('dialog').getByRole('button', { name: 'Set up member login' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Close dialog' }).click();
@@ -149,7 +154,7 @@ test('an owner creates and links a member without switching or persisting the me
   const mock = await isolatedProject(page, null, true);
   await page.goto('/editor.html');
   await expect(page.getByRole('button', { name: 'Live sync', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Project and account settings' }).click();
+  await page.getByRole('button', { name: 'Account settings' }).click();
   const form = page.getByRole('dialog').locator('[data-member]');
   await form.locator('select[name="person_id"]').selectOption('jordan');
   await form.getByLabel('Member email', { exact: true }).fill('claudia@example.test');
@@ -171,16 +176,24 @@ test('a configured project with no session stays at sign-in and cannot edit loca
   await expectNoLocalEditor(page);
   await page.getByRole('button', { name: 'Shopping', exact: true }).click();
   await expectNoLocalEditor(page);
-  await page.getByRole('button', { name: 'Project and account settings' }).click();
-  await expect(page.getByRole('dialog').getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
-  await expect(page.getByRole('dialog').getByRole('button', { name: 'Open my project', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Account settings' }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
+  await expect(dialog.locator('input')).toHaveCount(2);
+  await expect(dialog.getByLabel('Email', { exact: true })).toBeVisible();
+  await expect(dialog.getByLabel('Password', { exact: true })).toBeVisible();
+  await expect(dialog.getByLabel('Supabase project URL')).toHaveCount(0);
+  await expect(dialog.getByLabel('Publishable API key')).toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: 'Save connection', exact: true })).toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: 'Open my project', exact: true })).toHaveCount(0);
+  await page.screenshot({ path: 'test-results/homehq-env-signin.png', fullPage: true });
   expect(mock.requests).toEqual([]);
 });
 
-test('a successful Sign in selects the live project on the next reload', async ({ page }) => {
+test('a normal Auth session restores the environment project after reload', async ({ page }) => {
   await isolatedProject(page, null, false);
   await page.goto('/editor.html');
-  await page.getByRole('button', { name: 'Project and account settings' }).click();
+  await page.getByRole('button', { name: 'Account settings' }).click();
   await page.getByRole('dialog').getByLabel('Email', { exact: true }).fill('owner@example.test');
   await page.getByRole('dialog').getByLabel('Password', { exact: true }).fill('Test-Password-Only');
   await page.getByRole('dialog').getByRole('button', { name: 'Sign in', exact: true }).click();
@@ -188,21 +201,26 @@ test('a successful Sign in selects the live project on the next reload', async (
   await page.reload();
   await expect(page.getByRole('button', { name: 'Live sync', exact: true })).toBeVisible();
   await expect(page.locator('.family-lanes').getByText('Live owner', { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem('homehq.connection.v1'))).toBeNull();
 });
 
 test('a rejected expired session requires sign-in and a new login recovers live data', async ({ page }) => {
+  const authWarnings: string[] = [];
+  page.on('console', (message) => { if (message.text().includes('Multiple GoTrueClient')) authWarnings.push(message.text()); });
   const mock = await isolatedProject(page, 'live', true, { expired: true });
   await page.goto('/editor.html');
   await expect(page.locator('.connection')).toHaveText('Sign in');
   await expectNoLocalEditor(page);
   expect(mock.requests).toContain('/auth/v1/token');
   expect(mock.requests).not.toContain('/rest/v1/rpc/homehq_seed_demo');
-  await page.getByRole('button', { name: 'Project and account settings' }).click();
+  await page.getByRole('button', { name: 'Account settings' }).click();
   await page.getByRole('dialog').getByLabel('Email', { exact: true }).fill('owner@example.test');
   await page.getByRole('dialog').getByLabel('Password', { exact: true }).fill('Test-Password-Only');
   await page.getByRole('dialog').getByRole('button', { name: 'Sign in', exact: true }).click();
   await expect(page.locator('.family-lanes').getByText('Live owner', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Live sync', exact: true })).toBeVisible();
+  expect(mock.topics).toEqual([`realtime:homehq:${mock.homeId}`]);
+  expect(authWarnings).toEqual([]);
 });
 
 test('initial snapshot loading shows no sample editor until the project data arrives', async ({ page }) => {
@@ -233,7 +251,7 @@ test('initial snapshot failure keeps the project connection and does not substit
 test('a rejected password does not enable an offline editor', async ({ page }) => {
   await isolatedProject(page, 'demo', false, { rejectSignIn: true });
   await page.goto('/editor.html');
-  await page.getByRole('button', { name: 'Project and account settings' }).click();
+  await page.getByRole('button', { name: 'Account settings' }).click();
   await page.getByRole('dialog').getByLabel('Email', { exact: true }).fill('owner@example.test');
   await page.getByRole('dialog').getByLabel('Password', { exact: true }).fill('Test-Password-Only');
   await page.getByRole('dialog').getByRole('button', { name: 'Sign in', exact: true }).click();
@@ -250,7 +268,7 @@ test('browser sign-out revokes only its session and keeps the configured sign-in
     const otherMock = await isolatedProject(other, null, true);
     await Promise.all([page.goto('/editor.html'), other.goto('/editor.html')]);
     for (const tab of [page, other]) await expect(tab.locator('.family-lanes').getByText('Live owner', { exact: true })).toBeVisible();
-    await page.getByRole('button', { name: 'Project and account settings' }).click();
+    await page.getByRole('button', { name: 'Account settings' }).click();
     await page.getByRole('dialog').getByRole('button', { name: 'Sign out', exact: true }).click();
     await expect(page.locator('.connection')).toHaveText('Sign in');
     await expectNoLocalEditor(page);

@@ -1,5 +1,5 @@
 import './style.css';
-import { HomeHQBackend, badgePNG, loadConfig, saveConfig, type LiveStatus } from './backend';
+import { HomeHQBackend, badgePNG, loadConfig, type LiveStatus } from './backend';
 import { loadDemo, persistDemo, resetDemo, saveDemo, collection } from './demo';
 import { icon } from './icons';
 import { escape as e, safeColor, clock as formatClock, dayKey as formatDayKey, localDateTime as formatLocalDateTime, wallTimeEpoch, progress, upcoming, greeting } from './utils';
@@ -15,7 +15,10 @@ const entry = new URLSearchParams(window.location.search);
 let section: Section = (['today', 'calendar', 'chores', 'shopping', 'photos', 'home', 'agents'] as string[]).includes(entry.get('section') || '') ? entry.get('section') as Section : 'today';
 // A configured project is the source of truth. A stale browser demo preference
 // must never divert edits into local storage while the badge reads Supabase.
-let demo = !loadConfig();
+let configurationError = '';
+let demo = false;
+try { demo = !loadConfig(); }
+catch (error) { configurationError = error instanceof Error ? error.message : String(error); }
 let liveLoaded = false;
 let live: HomeHQBackend | null = null;
 let status: LiveStatus = demo ? 'signed-out' : 'connecting';
@@ -48,17 +51,17 @@ function badgeSample(sample: boolean): string { return sample ? '<span class="sa
 function samplePhoto(photo: Photo): boolean { return !photo.path && !photo.url?.startsWith('data:'); }
 
 function render(): void {
-  const ready = demo || liveLoaded;
+  const ready = !configurationError && (demo || liveLoaded);
   const connected = status === 'live' && liveLoaded;
   const connectionLabel = demo ? 'Offline demo' : status === 'signed-out' ? 'Sign in' : connected ? 'Live sync' : liveLoaded ? 'Reconnecting' : 'Connecting';
   // The fixture cannot stand in for a missing Auth session or snapshot: its
   // editable rows would look like the household while saving nowhere useful.
-  const content = ready ? ({ today: todayView, calendar: calendarView, chores: choresView, shopping: shoppingView, photos: photosView, home: homeView, agents: agentsView })[section]()
+  const content = configurationError ? intro('App configuration needs attention.', configurationError) : ready ? ({ today: todayView, calendar: calendarView, chores: choresView, shopping: shoppingView, photos: photosView, home: homeView, agents: agentsView })[section]()
     : intro(status === 'signed-out' ? 'Sign in to your home.' : 'Connecting to your home.',
       status === 'signed-out' ? 'Sign in with your own family account. Your household stays in Supabase.' : 'Loading your household from Supabase.')
-      + `<button class="button solid" data-settings>${status === 'signed-out' ? 'Open account settings' : 'Connection settings'}</button>`;
+      + `<button class="button solid" data-settings>${status === 'signed-out' ? 'Sign in' : 'Account settings'}</button>`;
   app.innerHTML = `<aside class="rail"><button class="monogram" data-go="today" aria-label="Home HQ, Today">h.</button><nav aria-label="Sections">${sections.map((key) => `<button class="nav-item ${section === key ? 'active' : ''}" data-go="${key}" ${section === key ? 'aria-current="page"' : ''}>${icon(key, 23)}<span>${names[key]}</span></button>`).join('')}</nav><div class="rail-bottom"><div class="rail-rule"></div><button data-settings aria-label="Settings">${icon('settings', 20)}</button><div class="rail-date">${now().toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}<br>${now().getFullYear()}</div></div></aside>
-    <div class="shell"><header class="masthead"><div class="brand serif">Home HQ <i>A little home headquarters.</i></div><div class="masthead-right"><button class="connection ${demo ? 'demo' : connected ? '' : 'reconnecting'}" data-settings><span class="status-dot"></span>${connectionLabel}</button><button class="settings-button" data-settings aria-label="Project and account settings">${icon('settings', 15)}<span>${demo ? 'Connect project' : 'Your project'}</span></button></div></header>
+    <div class="shell"><header class="masthead"><div class="brand serif">Home HQ <i>A little home headquarters.</i></div><div class="masthead-right"><button class="connection ${demo ? 'demo' : connected ? '' : 'reconnecting'}" data-settings><span class="status-dot"></span>${connectionLabel}</button><button class="settings-button" data-settings aria-label="Account settings">${icon('settings', 15)}<span>Account</span></button></div></header>
     ${fault ? `<div class="status-error" role="alert">${e(fault)}<button data-refresh>Try again</button></div>` : ''}
     <main id="main" tabindex="-1" aria-label="${names[section]}">${content}</main>
     <footer class="page-footer"><span><a href="/">Back to dashboard</a> · Household editor for <a href="https://github.com/wesbos/photo-frame-dashboard" target="_blank" rel="noreferrer">Wes Bos’s Home HQ</a>.</span><span>${demo ? 'Changes stay in this browser. Sample clock & providers.' : liveLoaded ? `${snapshot.viewer?.person_id ? `Signed in as ${e(person(snapshot.viewer.person_id)?.name || 'family member')} · ` : ''}Shared household · ${snapshot.home.timezone} · Revision ${snapshot.revision}` : `Your Supabase project · ${status === 'signed-out' ? 'Sign in to load your household.' : 'Loading your household.'}`}</span></footer></div>
@@ -220,11 +223,9 @@ async function setDone(kind: 'chore' | 'shopping', id: string, done?: boolean, d
 }
 
 function settings(): void {
-  const config = loadConfig();
   const signedIn = !!live?.session;
-  openSheet(`<div class="label">Make it yours</div><h2 id="sheet-title" class="sheet-title">Your little headquarters.</h2><p class="sheet-intro">${config ? 'Your dashboard connects automatically to Supabase and shares household updates with your badge.' : 'Connect your Supabase project to share household updates with your badge.'}</p><form class="form-stack" data-config>${field('Supabase project URL', 'url', config?.url || '', 'required placeholder="https://your-project.supabase.co"', 'url')}${field('Publishable API key', 'key', config?.key || '', 'required placeholder="sb_publishable_…" autocomplete="off"')}<small>This public project key is saved in this browser. Secret and service-role keys stay on the server.</small><p class="form-error" role="alert"></p><button class="button solid" type="submit">Save connection</button></form>
-    ${config ? `<div class="section-rule"></div>${signedIn ? `<p class="account-email">${e(live!.session!.user.email)}</p><p class="connection-detail">${snapshot.viewer?.person_id ? `Signed in as ${e(person(snapshot.viewer.person_id)?.name || 'family member')}. ` : ''}Everyone in your household shares this dashboard. Your login records who completes each task.</p><div class="settings-actions"><button class="button" data-signout>Sign out</button></div>${liveLoaded ? memberLogins() : ''}` : `<form class="form-stack" data-auth><div class="label">Your account</div>${field('Email', 'email', '', 'required autocomplete="email"', 'email')}${field('Password', 'password', '', 'required minlength="8" autocomplete="current-password"', 'password')}<p class="form-error" role="alert"></p><div class="form-actions"><button class="button" type="submit" name="action" value="signup">Create account</button><button class="button solid" type="submit" name="action" value="signin">Sign in</button></div><small>To join an existing household, ask its owner to set up your member login here first. Confirm your email if your project requires it.</small></form>`}` : `<div class="section-rule"></div><div class="label">Offline preview</div><div class="settings-actions"><button class="button" data-reset>Reset demo</button></div>`}
-    <p class="config-note" style="margin-top:17px">The badge uses the same project URL and publishable key. Enter your email and password on its sign-in screen; it saves your refresh token so you stay signed in. Each device gets its own session.</p>`);
+  openSheet(`<div class="label">Home HQ</div><h2 id="sheet-title" class="sheet-title">${signedIn ? 'Your account' : 'Sign in'}</h2>
+    ${configurationError ? `<p class="sheet-intro">${e(configurationError)}</p>` : demo ? `<p class="sheet-intro">This preview uses example data.</p><button class="button" data-reset>Reset demo</button>` : signedIn ? `<p class="account-email">${e(live!.session!.user.email)}</p><p class="connection-detail">${snapshot.viewer?.person_id ? `Signed in as ${e(person(snapshot.viewer.person_id)?.name || 'family member')}. ` : ''}Everyone in your household shares this dashboard.</p><div class="settings-actions"><button class="button" data-signout>Sign out</button></div>${liveLoaded ? memberLogins() : ''}` : `<p class="sheet-intro">Sign in to your household.</p><form class="form-stack" data-auth>${field('Email', 'email', '', 'required autocomplete="email"', 'email')}${field('Password', 'password', '', 'required minlength="8" autocomplete="current-password"', 'password')}<p class="form-error" role="alert"></p><div class="form-actions"><button class="button solid" type="submit" name="action" value="signin">Sign in</button><button class="button" type="submit" name="action" value="signup">Create account</button></div><small>To join an existing household, ask its owner to set up your member login first.</small></form>`}`);
 }
 
 function memberLogins(): string {
@@ -314,7 +315,7 @@ async function action(target: HTMLElement): Promise<void> {
   else if (target.dataset.edit) edit(target.dataset.edit as Kind, target.dataset.id);
   else if (target.dataset.complete) await setDone(target.dataset.complete as 'chore' | 'shopping', target.dataset.id!);
   else if (target.dataset.credit) await setDone('chore', target.dataset.id!, true, target.dataset.credit);
-  else if (target.hasAttribute('data-refresh')) { fault = ''; render(); if (!live?.session || !liveLoaded) await configure(); else await live.refresh(); }
+  else if (target.hasAttribute('data-refresh')) { fault = ''; render(); if (!live) await configure(); else if (!live.session || !liveLoaded) await live.start(); else await live.refresh(); }
   else if (target.hasAttribute('data-reset') && demo) { snapshot = resetDemo(); fault = ''; closeSheet(); render(); notify('The original example is back.'); }
   else if (target.hasAttribute('data-signout')) { await live?.signOut(); liveLoaded = false; status = 'signed-out'; closeSheet(); render(); notify('Signed out of this browser. Your badge stays connected.'); }
   else if (target.hasAttribute('data-upload')) uploadDialog();
@@ -349,18 +350,12 @@ document.addEventListener('submit', (event) => {
   const submitButtons = [...form.querySelectorAll<HTMLButtonElement>('button[type="submit"]')]; submitButtons.forEach((b) => b.disabled = true);
   const work = async (): Promise<void> => {
     if (form.dataset.save) await submitEdit(form);
-    else if (form.hasAttribute('data-config')) {
-      const data = new FormData(form); saveConfig({ url: String(data.get('url')), key: String(data.get('key')) });
-      await configure(); settings(); notify('Project connection saved.');
-    } else if (form.hasAttribute('data-auth')) {
+    else if (form.hasAttribute('data-auth')) {
       const data = new FormData(form); if (!live) await configure();
       if (button?.value === 'signup') {
         const active = await live!.signUp(String(data.get('email')), String(data.get('password')));
         if (!active) { status = 'signed-out'; render(); notify('Check your email to finish creating your account.'); closeSheet(); return; }
       } else await live!.signIn(String(data.get('email')), String(data.get('password')));
-      // A startup Auth/network failure can precede listener registration. Read
-      // the newly persisted session through a fresh backend after sign-in.
-      await configure();
       closeSheet(); notify('Welcome home. Your project is connected.');
     } else if (form.hasAttribute('data-member')) {
       requireWritable();

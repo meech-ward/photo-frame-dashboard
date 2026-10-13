@@ -4,16 +4,18 @@ import { createClient } from '@supabase/supabase-js';
 
 const url = process.env.HOMEHQ_TEST_URL;
 const key = process.env.HOMEHQ_TEST_KEY;
-test.skip(!url || !key, 'Live tests require an explicitly supplied disposable local Supabase project.');
+const webURL = process.env.HOMEHQ_LIVE_WEB_URL;
+test.use({ baseURL: webURL || 'http://127.0.0.1:5186' });
+test.skip(!url || !key || !webURL, 'Live tests require a disposable local Supabase project and a Vite server configured for it.');
 
 async function connect(page: Page): Promise<void> {
   await page.goto('/editor.html');
-  await page.getByRole('button', { name: 'Project and account settings' }).click();
+  await page.getByRole('button', { name: 'Account settings' }).click();
   const dialog = page.getByRole('dialog');
-  await dialog.getByLabel('Supabase project URL').fill(url!);
-  await dialog.getByLabel('Publishable API key').fill(key!);
-  await dialog.getByRole('button', { name: 'Save connection', exact: true }).click();
   await expect(dialog.getByLabel('Email', { exact: true })).toBeVisible();
+  await expect(dialog.locator('input')).toHaveCount(2);
+  await expect(dialog.getByLabel('Supabase project URL')).toHaveCount(0);
+  await expect(dialog.getByLabel('Publishable API key')).toHaveCount(0);
 }
 
 test('new owner signup, independent same-owner sessions, private Realtime and RLS', async ({ browser, page }) => {

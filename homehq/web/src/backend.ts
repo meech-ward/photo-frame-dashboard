@@ -1,7 +1,6 @@
 import { createClient, type SupabaseClient, type Session, type RealtimeChannel } from '@supabase/supabase-js';
 import type { Config, Snapshot, Kind, Editable, Chore, Shopping, Device, Event, Photo } from './types';
 
-const CONFIG_KEY = 'homehq.connection.v1';
 export function validateConfig(config: Config): Config {
   const url = new URL(config.url.trim());
   const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
@@ -17,15 +16,14 @@ export function validateConfig(config: Config): Config {
   return { url: url.origin, key };
 }
 export function loadConfig(): Config | null {
-  try {
-    const saved = localStorage.getItem(CONFIG_KEY);
-    if (saved) return validateConfig(JSON.parse(saved));
-    const url = import.meta.env.VITE_SUPABASE_URL;
-    const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-    return url && key ? validateConfig({ url, key }) : null;
-  } catch { return null; }
+  const url = import.meta.env.VITE_SUPABASE_URL?.trim();
+  const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim();
+  if (!url && !key) return null;
+  if (!url || !key) throw new Error('Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY in .env.local, then restart Vite.');
+  // The deployed build chooses its project. Browser state must never redirect
+  // a configured application to a different backend on another device.
+  return validateConfig({ url, key });
 }
-export function saveConfig(config: Config): void { localStorage.setItem(CONFIG_KEY, JSON.stringify(validateConfig(config))); }
 export type LiveStatus = 'connecting' | 'live' | 'reconnecting' | 'signed-out';
 
 export class HomeHQBackend {
@@ -47,24 +45,30 @@ export class HomeHQBackend {
   }
 
   async start(): Promise<void> {
+    if (!this.unsubscribeAuth) {
+      // Register before the initial read: an expired session can reject that
+      // read, but a later sign-in must still refresh this same client's channel.
+      const { data: listener } = this.client.auth.onAuthStateChange((_event, session) => {
+        // Supabase's Auth callback runs under an internal lock. Deferring network
+        // calls avoids waiting for the lock held by the callback itself.
+        setTimeout(() => { if (this.active) void this.acceptSession(session).catch((e) => this.onStatus('reconnecting', String(e.message || e))); }, 0);
+      });
+      this.unsubscribeAuth = () => listener.subscription.unsubscribe();
+    }
     const { data, error } = await this.client.auth.getSession();
     if (error) throw error;
     await this.acceptSession(data.session);
-    const { data: listener } = this.client.auth.onAuthStateChange((_event, session) => {
-      // Supabase's Auth callback runs under an internal lock. Deferring network
-      // calls avoids waiting for the lock held by the callback itself.
-      setTimeout(() => { if (this.active) void this.acceptSession(session).catch((e) => this.onStatus('reconnecting', String(e.message || e))); }, 0);
-    });
-    this.unsubscribeAuth = () => listener.subscription.unsubscribe();
   }
 
   async signIn(email: string, password: string): Promise<void> {
-    const { error } = await this.client.auth.signInWithPassword({ email, password });
+    const { data, error } = await this.client.auth.signInWithPassword({ email, password });
     if (error) throw error;
+    await this.acceptSession(data.session);
   }
   async signUp(email: string, password: string): Promise<boolean> {
     const { data, error } = await this.client.auth.signUp({ email, password, options: { emailRedirectTo: window.location.origin } });
     if (error) throw error;
+    if (data.session) await this.acceptSession(data.session);
     return !!data.session;
   }
   async signOut(): Promise<void> {

@@ -2,5 +2,6 @@
   "canonical_repository": "https://github.com/meech-ward/select-badge",
   "canonical_checkpoint": "a59b79efa61228b0aa226a28dadde34e7b09f920",
   "upstream_revision": "fbe9a30ac4f9c77d3863e19a5e98d9eadb04ab03",
-  "original_dashboard_unchanged": true
+  "original_dashboard_unchanged": true,
+  "frontend_checkpoint": "51bce088249b2b7bfc7b0e43d0dde186236953df"
 }

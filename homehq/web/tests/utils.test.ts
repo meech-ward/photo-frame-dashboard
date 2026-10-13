@@ -1,10 +1,36 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { escape, progress, upcoming, safeColor, localDateTime, wallTimeEpoch, greeting } from '../src/utils';
-import { validateConfig } from '../src/backend';
+import { loadConfig, validateConfig } from '../src/backend';
 import { seedDemo } from '../src/demo';
 import fixture from '../src/demo-fixture.json';
 
 describe('Home HQ boundaries', () => {
+  afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
+
+  it('loads the build-time project without consulting legacy browser configuration', () => {
+    vi.stubEnv('VITE_SUPABASE_URL', 'https://example.supabase.co');
+    vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', 'sb_publishable_test');
+    const getItem = vi.fn(() => { throw new Error('Browser configuration must not be read'); });
+    vi.stubGlobal('localStorage', { getItem });
+    expect(loadConfig()).toEqual({ url: 'https://example.supabase.co', key: 'sb_publishable_test' });
+    expect(getItem).not.toHaveBeenCalled();
+  });
+  it('does not turn a legacy browser connection into project configuration', () => {
+    vi.stubEnv('VITE_SUPABASE_URL', '');
+    vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', '');
+    const getItem = vi.fn(() => JSON.stringify({ url: 'https://old-project.supabase.co', key: 'sb_publishable_old' }));
+    vi.stubGlobal('localStorage', { getItem });
+    expect(loadConfig()).toBeNull();
+    expect(getItem).not.toHaveBeenCalled();
+  });
+  it('reports incomplete environment configuration instead of silently opening a local demo', () => {
+    vi.stubEnv('VITE_SUPABASE_URL', 'https://example.supabase.co');
+    vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', '');
+    expect(() => loadConfig()).toThrow();
+    vi.stubEnv('VITE_SUPABASE_URL', '');
+    vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', 'sb_publishable_test');
+    expect(() => loadConfig()).toThrow();
+  });
   it('renders household text as text even when a title contains markup', () => {
     expect(escape('<img src=x onerror="bad()">')).toBe('&lt;img src=x onerror=&quot;bad()&quot;&gt;');
     expect(safeColor('red;position:fixed')).toBe('#343C35');

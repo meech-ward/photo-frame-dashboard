@@ -3,8 +3,8 @@ import { readFileSync } from 'node:fs';
 import type { Snapshot } from '../../src/types';
 
 const fixture = JSON.parse(readFileSync(new URL('../../src/demo-fixture.json', import.meta.url), 'utf8')) as Snapshot;
-const project = 'https://upstream-test.supabase.co';
-const authKey = 'homehq.auth.upstream-test.supabase.co';
+const project = 'https://reload-test.supabase.co';
+const authKey = 'homehq.auth.reload-test.supabase.co';
 const userId = '00000000-0000-4000-8000-000000000001';
 const homeId = '00000000-0000-4000-8000-000000000099';
 const instant = '2026-10-12T19:18:00Z';
@@ -16,7 +16,7 @@ const session = {
   user: { id: userId, email: 'claudia@example.test', aud: 'authenticated', role: 'authenticated' },
 };
 
-test.use({ timezoneId: 'America/Toronto' });
+test.use({ timezoneId: 'America/Toronto', baseURL: process.env.HOMEHQ_CONFIGURED_WEB_URL || 'http://127.0.0.1:5185' });
 
 async function isolatedHousehold(page: Page, signedIn = true, privatePhoto = false) {
   const snapshot = structuredClone(fixture);
@@ -36,12 +36,11 @@ async function isolatedHousehold(page: Page, signedIn = true, privatePhoto = fal
   let snapshotReads = 0;
   let broadcast: (() => void) | undefined;
   await page.clock.setFixedTime(new Date(instant));
-  await page.addInitScript(({ project, authKey, signedIn, session }) => {
+  await page.addInitScript(({ authKey, signedIn, session }) => {
     if (localStorage.getItem('homehq.upstream.test.seeded')) return;
     localStorage.setItem('homehq.upstream.test.seeded', 'yes');
-    localStorage.setItem('homehq.connection.v1', JSON.stringify({ url: project, key: 'sb_publishable_test_only' }));
     if (signedIn) localStorage.setItem(authKey, JSON.stringify(session));
-  }, { project, authKey, signedIn, session });
+  }, { authKey, signedIn, session });
 
   // The real supabase-js Auth/RPC/Storage/WebSocket client runs here, but every
   // project request is intercepted. This never edits a hosted household.
@@ -196,6 +195,10 @@ test('sign-in lives in the retained editor and its session opens the original da
   await expect(page.locator('#view-home .h-lanes')).toHaveCount(0);
   await signIn.click();
   const dialog = page.getByRole('dialog');
+  await expect(dialog.locator('input')).toHaveCount(2);
+  await expect(dialog.getByLabel('Supabase project URL')).toHaveCount(0);
+  await expect(dialog.getByLabel('Publishable API key')).toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: 'Save connection', exact: true })).toHaveCount(0);
   await dialog.getByLabel('Email', { exact: true }).fill('claudia@example.test');
   await dialog.getByLabel('Password', { exact: true }).fill('synthetic-password');
   await dialog.getByRole('button', { name: 'Sign in', exact: true }).click();
@@ -203,4 +206,5 @@ test('sign-in lives in the retained editor and its session opens the original da
   expect(mock.bodies.find((request) => request.path === '/auth/v1/token')?.body).toMatchObject({ email: 'claudia@example.test', password: 'synthetic-password' });
   await page.getByRole('link', { name: /dashboard/i }).click();
   await expectLiveDashboard(page);
+  expect(await page.evaluate(() => localStorage.getItem('homehq.connection.v1'))).toBeNull();
 });

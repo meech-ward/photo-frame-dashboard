@@ -37,8 +37,9 @@ declarative schema is in `homehq/supabase/schemas/`; deployed history is in
 specific project; use the general deployment guide for your own project.
 
 In `homehq/web`, copy `.env.example` to the ignored `.env.local` and replace its
-example values with your project URL and public **publishable key**. You can
-also enter these public connection details in the editor's Settings. Restart
+example values with your project URL and public **publishable key**. These
+variables are the only app project configuration; sign-in asks only for
+email/password. For production, provide them in the build environment. Restart
 Vite after changing environment configuration. Never put a secret or
 service-role key in the frontend, and never copy an existing user's session.
 

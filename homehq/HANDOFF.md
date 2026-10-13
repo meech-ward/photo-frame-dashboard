@@ -100,7 +100,10 @@ The companion at `http://127.0.0.1:5191/` uses Wes’s original dashboard.
 The retained household editor/account/upload UI is at `/editor.html`.
 Current development source is `/Users/supa-sam/Projects/badge-homehq/homehq/web`;
 the public starter also carries the same frontend. It is a local server, not a public deployment or a guaranteed service
-after restart. Its ignored `.env.local` supplies URL/public key. Restart using
+after restart. Its ignored `.env.local` supplies `VITE_SUPABASE_URL` and
+`VITE_SUPABASE_PUBLISHABLE_KEY`; these are the only browser project configuration.
+The account form asks only for email/password, and legacy browser connection
+settings are ignored. Restart using
 the [companion helper](web/README.md#run-against-your-hosted-project) with existing
 public-key configuration supplied privately; never copy a browser Auth token.
 
