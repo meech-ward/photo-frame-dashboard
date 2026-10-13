@@ -56,3 +56,13 @@ tracked files for private source/config paths and missing relative Markdown
 links. Add `--starter path/to/homehq-starter.zip` to check a generated bundle
 too. This offline check complements review of dependency URLs and credentials;
 it does not verify remote availability or establish that arbitrary files are safe.
+
+## License notices
+
+Keep the component-specific notices with their source: ModRetro's MCU baseline
+and patch use GPL-3.0, pngle and the upstream aiohttp client identify MIT, and
+Mona Sans includes its OFL notice. The referenced `supabase-micro` SDK is MIT.
+At the revisions recorded in this fork, Wes's dashboard repository and the
+public SELECT source do not include a repository-wide license. This fork does
+not assign a new blanket license to their code; that remains an upstream
+clarification for broader reuse.

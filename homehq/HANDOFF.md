@@ -79,6 +79,20 @@ operation, not routine deployment.
 
 ## Current behavior and limits
 
+The public-checkout review on **2026-10-13** passed 168 app host tests, 19 tool
+tests, 46 web unit tests, 32 browser tests with mocked Supabase, TypeScript checks
+and a clean web production build. The pinned Tufty build compiled 20 modules
+reproducibly; all 60 source/bytecode artifact hashes matched the accepted app
+payload. The extracted starter also passed the app host tests, sample parity and
+29-file original-frontend integrity check without a private checkout.
+
+The public-source check passed for the checkout and generated starter; all 17
+GitHub documentation targets were accessible without authentication. The source
+map and setup commands were reviewed independently. These are source/build
+checks; this review did not rerun a live database deployment or physical-device
+acceptance. Reproduce the checks through [HOMEHQ.md](../HOMEHQ.md),
+[web verification](web/README.md#verification), and [BUILD.md](BUILD.md).
+
 All targets share ordinary email/password Auth, one household, private Realtime,
 Storage photos and server-recorded action identity. Today shows the family;
 Chores starts on the signed-in member. Versioned desired-value writes prevent
