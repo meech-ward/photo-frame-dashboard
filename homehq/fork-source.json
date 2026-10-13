@@ -4,5 +4,6 @@
   "upstream_revision": "fbe9a30ac4f9c77d3863e19a5e98d9eadb04ab03",
   "original_dashboard_unchanged": true,
   "frontend_checkpoint": "51bce088249b2b7bfc7b0e43d0dde186236953df",
-  "photo_recovery_checkpoint": "3190463cdac0c3a5c539e6638d6a8e7d42a94081"
+  "photo_recovery_checkpoint": "3190463cdac0c3a5c539e6638d6a8e7d42a94081",
+  "photo_upload_checkpoint": "d34e2682bfa5d507f5d5e0cda0ca4d6635396aa2"
 }

@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient, type Session, type RealtimeChannel } from '@supabase/supabase-js';
 import type { Config, Snapshot, Kind, Editable, Chore, Shopping, Device, Event, Photo } from './types';
+import { coalescePNGIDAT, MAX_BADGE_PNG_BYTES } from './badge-png';
 
 export function validateConfig(config: Config): Config {
   const url = new URL(config.url.trim());
@@ -248,9 +249,7 @@ export class HomeHQBackend {
   async stop(): Promise<void> { this.active = false; this.unsubscribeAuth?.(); await this.dropChannel(); await this.client.auth.stopAutoRefresh(); }
 }
 
-// Match the badge's bounded image reader. A valid opaque 320×240 RGBA PNG can
-// exceed 256 KiB when its pixels compress poorly; 320 KiB keeps that case valid.
-export const MAX_BADGE_PNG_BYTES = 327_680;
+export { MAX_BADGE_PNG_BYTES } from './badge-png';
 
 export async function badgePNG(file: File): Promise<Blob> {
   if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) throw new Error('Choose a JPEG, PNG or WebP photo.');
@@ -266,6 +265,6 @@ export async function badgePNG(file: File): Promise<Blob> {
     context.drawImage(bitmap, (320 - bitmap.width * ratio) / 2, (240 - bitmap.height * ratio) / 2, bitmap.width * ratio, bitmap.height * ratio);
     const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('Could not prepare the photo.')), 'image/png'));
     if (blob.size > MAX_BADGE_PNG_BYTES) throw new Error('The prepared photo is too large for the badge. Choose a simpler image.');
-    return blob;
+    return new Blob([coalescePNGIDAT(new Uint8Array(await blob.arrayBuffer()))], { type: 'image/png' });
   } finally { bitmap.close(); }
 }

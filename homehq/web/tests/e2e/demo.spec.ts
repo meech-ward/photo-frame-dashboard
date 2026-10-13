@@ -136,4 +136,12 @@ test('a poorly compressible 320x240 photo is accepted within the badge output ca
   expect(data[24]).toBe(8); // PNG bit depth.
   expect([2, 3, 6]).toContain(data[25]); // Badge-supported colour types.
   expect(data[28]).toBe(0); // Interlaced PNGs are not supported by the badge.
+  let idatChunks = 0;
+  for (let offset = 8; offset < data.length;) {
+    if (data.toString('ascii', offset + 4, offset + 8) === 'IDAT') idatChunks++;
+    offset += data.readUInt32BE(offset) + 12;
+  }
+  // The native decoder cannot cross the IDAT boundaries that browsers emit
+  // for a large image; a browser displaying it is not a badge decode check.
+  expect(idatChunks).toBe(1);
 });
