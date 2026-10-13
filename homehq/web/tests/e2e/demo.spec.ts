@@ -75,25 +75,27 @@ test('sample lock changes require a deliberate confirmation', async ({ page }) =
   await expect(page.getByRole('button', { name: 'Front door, Unlocked' })).toBeVisible();
 });
 
-test('uploaded demo photos become actual 320x240 PNGs', async ({ page }) => {
-  const source = await page.evaluate(() => {
-    const canvas = document.createElement('canvas'); canvas.width = 640; canvas.height = 480;
-    const context = canvas.getContext('2d')!; context.fillStyle = '#315342'; context.fillRect(0, 0, 640, 480);
-    return canvas.toDataURL('image/png').split(',')[1];
-  });
-  await page.getByRole('button', { name: 'Photos', exact: true }).click();
-  await page.getByRole('button', { name: 'Add photo', exact: true }).click();
-  await page.getByRole('dialog').getByLabel('Photo', { exact: true }).setInputFiles({
-    name: 'test.png', mimeType: 'image/png',
-    buffer: Buffer.from(source, 'base64'),
-  });
-  await page.getByRole('dialog').getByLabel('Place').fill('The kitchen');
-  await page.getByRole('dialog').getByRole('button', { name: 'Add photo', exact: true }).click();
-  await expect(page.getByRole('dialog')).not.toBeVisible();
-  const image = page.getByRole('img', { name: 'The kitchen', exact: true });
-  await expect(image).toHaveAttribute('src', /^data:image\/png;base64,/);
-  await expect.poll(async () => image.evaluate((img: HTMLImageElement) => [img.naturalWidth, img.naturalHeight])).toEqual([320, 240]);
+for (const inputType of ['image/png', 'image/jpeg', 'image/webp']) {
+  test(`uploaded demo photos become actual 320x240 PNGs from ${inputType}`, async ({ page }) => {
+    const source = await page.evaluate((inputType) => {
+      const canvas = document.createElement('canvas'); canvas.width = 640; canvas.height = 480;
+      const context = canvas.getContext('2d')!; context.fillStyle = '#315342'; context.fillRect(0, 0, 640, 480);
+      return canvas.toDataURL(inputType).split(',')[1];
+    }, inputType);
+    await page.getByRole('button', { name: 'Photos', exact: true }).click();
+    await page.getByRole('button', { name: 'Add photo', exact: true }).click();
+    await page.getByRole('dialog').getByLabel('Photo', { exact: true }).setInputFiles({
+      name: `test.${inputType.split('/')[1]}`, mimeType: inputType,
+      buffer: Buffer.from(source, 'base64'),
+    });
+    await page.getByRole('dialog').getByLabel('Place').fill('The kitchen');
+    await page.getByRole('dialog').getByRole('button', { name: 'Add photo', exact: true }).click();
+    await expect(page.getByRole('dialog')).not.toBeVisible();
+    const image = page.getByRole('img', { name: 'The kitchen', exact: true });
+    await expect(image).toHaveAttribute('src', /^data:image\/png;base64,/);
+    await expect.poll(async () => image.evaluate((img: HTMLImageElement) => [img.naturalWidth, img.naturalHeight])).toEqual([320, 240]);
 });
+}
 
 test('mobile screens remain readable without horizontal overflow', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });

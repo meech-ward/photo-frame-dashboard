@@ -6,15 +6,16 @@ import { pathToFileURL } from 'node:url';
 import { inflateSync } from 'node:zlib';
 import { chromium } from '@playwright/test';
 
-const options = { '--web-url': 'http://127.0.0.1:5184/' };
+const options = { '--web-url': 'http://127.0.0.1:5184/', '--input-type': 'image/png' };
 for (let index = 2; index < process.argv.length; index += 2) {
   const key = process.argv[index];
-  if (!['--web-url', '--runtime'].includes(key) || !process.argv[index + 1]) {
-    throw new Error('Usage: node tools/check-badge-png.mjs --runtime RUNTIME_MJS [--web-url http://127.0.0.1:5184/]');
+  if (!['--web-url', '--runtime', '--input-type'].includes(key) || !process.argv[index + 1]) {
+    throw new Error('Usage: node tools/check-badge-png.mjs --runtime RUNTIME_MJS [--web-url http://127.0.0.1:5184/] [--input-type image/png|image/jpeg|image/webp]');
   }
   options[key] = process.argv[index + 1];
 }
 if (!options['--runtime']) throw new Error('Pass --runtime with the native picovector MicroPython WASM loader.');
+assert.ok(['image/png', 'image/jpeg', 'image/webp'].includes(options['--input-type']), 'Choose a supported source image MIME type.');
 const webURL = new URL(options['--web-url']);
 assert.equal(webURL.protocol, 'http:');
 assert.ok(['127.0.0.1', 'localhost', '[::1]'].includes(webURL.hostname), 'The gate only uses a local Vite server.');
@@ -85,7 +86,7 @@ try {
     return route.continue();
   });
   await page.goto(new URL('/__badge_png_gate', webURL).href);
-  const result = await page.evaluate(async () => {
+  const result = await page.evaluate(async (inputType) => {
     const { badgePNG } = await import('/src/backend.ts');
     const canvas = document.createElement('canvas');
     canvas.width = 320; canvas.height = 240;
@@ -103,7 +104,8 @@ try {
       pixels.data[offset + 3] = 255;
     }
     context.putImageData(pixels, 0, 0);
-    const source = await new Promise((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('PNG encoding failed.')), 'image/png'));
+    const source = await new Promise((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('Source encoding failed.')), inputType));
+    if (source.type !== inputType) throw new Error('The browser did not encode the requested source format.');
     let prepared;
     const toBlob = HTMLCanvasElement.prototype.toBlob;
     // Capture the exact intermediate that badgePNG encodes before coalescing;
@@ -112,13 +114,13 @@ try {
       return toBlob.call(this, (blob) => { prepared = blob; callback(blob); }, ...args);
     };
     try {
-      const converted = await badgePNG(new File([source], 'synthetic-codec-test.png', { type: 'image/png' }));
+      const converted = await badgePNG(new File([source], `synthetic-codec-test.${inputType.split('/')[1]}`, { type: inputType }));
       if (!prepared) throw new Error('Upload function did not encode its canvas.');
       return { prepared: Array.from(new Uint8Array(await prepared.arrayBuffer())), converted: Array.from(new Uint8Array(await converted.arrayBuffer())) };
     } finally {
       HTMLCanvasElement.prototype.toBlob = toBlob;
     }
-  });
+  }, options['--input-type']);
   prepared = Buffer.from(result.prepared);
   converted = Buffer.from(result.converted);
 } finally {
@@ -145,16 +147,19 @@ mp.FS.writeFile('/badge-singlechunk.png', converted);
 await mp.runPythonAsync(`
 import json
 from picovector import image
-before_failed = False
+before_outcome = 'decoded'
 try:
     image.load('/browser-multichunk.png')
 except ValueError:
-    before_failed = True
-assert before_failed, 'Native negative control unexpectedly decoded'
+    before_outcome = 'ValueError'
+# Failure depends on compressed data at the IDAT boundary. Lossy-source files
+# can decode, so only the deterministic PNG-source regression must raise.
+if ${options['--input-type'] === 'image/png' ? 'True' : 'False'}:
+    assert before_outcome == 'ValueError', 'Native negative control unexpectedly decoded'
 after = image.load('/badge-singlechunk.png')
 assert after.width == 320 and after.height == 240, 'Native decoded dimensions differ'
-print(json.dumps({'before': 'ValueError', 'after': 'decoded', 'width': after.width, 'height': after.height}))
+print(json.dumps({'before': before_outcome, 'after': 'decoded', 'width': after.width, 'height': after.height}))
 `);
 const native = output.filter((line) => line.startsWith('{')).map((line) => JSON.parse(line));
 assert.equal(native.length, 1, 'The native decoder did not report success.');
-console.log(JSON.stringify({ ...native[0], browser_idat_chunks: before.idats.length, badge_idat_chunks: after.idats.length, browser_bytes: prepared.length, badge_bytes: converted.length, lossless: true, native_runtime_sha256: expectedHash }));
+console.log(JSON.stringify({ ...native[0], input_type: options['--input-type'], browser_idat_chunks: before.idats.length, badge_idat_chunks: after.idats.length, browser_bytes: prepared.length, badge_bytes: converted.length, lossless: true, lossless_scope: 'PNG IDAT coalescing', native_runtime_sha256: expectedHash }));
