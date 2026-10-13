@@ -6,7 +6,8 @@ editor, and native apps for the **SELECT Tufty 2350 badge** and the
 **ModRetro Chromatic**. Accounts, calendar events, chores, shopping and uploaded
 photos belong to one household and sync between its signed-in devices.
 
-Wes's `dashboard/`, Android frame tools and original README remain unchanged.
+Wes's `dashboard/` and Android frame guides are preserved. The root README adds
+only a Home HQ entry note above his original instructions.
 The additions live in `homehq/`; the [upstream manifest](homehq/web/UPSTREAM.md)
 pins and verifies the 29 original frontend files reused by the connected app.
 The badge and Chromatic have their own native layouts and button controls.

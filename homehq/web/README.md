@@ -89,7 +89,8 @@ Sign-in, refresh and recovery reuse one client and its Auth listener.
 ## Run against your hosted project
 
 After deploying a Home HQ project using the [backend guide](../backend-README.md),
-set the two variables above in `homehq/web/.env.local`, then run:
+set the two variables above in `homehq/web/.env.local`, then run from the
+repository root:
 
 ```sh
 npm --prefix homehq/web ci
@@ -157,11 +158,19 @@ with existing event/chore links must be reassigned before removal.
 
 ## Verification
 
+From `homehq/web/`, install the locked packages and Chromium once:
+
+```sh
+npm ci
+npx playwright install chromium
+```
+
+Then run the checks:
+
 ```sh
 npm run typecheck
 npm test
 npm run build
-npm run test:e2e
 ```
 
 The browser tests use two local Vite servers so the public prototype and an

@@ -1,5 +1,9 @@
 # Taking over Android photo frames
 
+> **Home HQ fork:** For the Supabase household dashboard and native Tufty and
+> Chromatic clients, start with [HOMEHQ.md](HOMEHQ.md), including when using an agent.
+> Wes's original Android frame guides continue below.
+
 Turn a cheap Android photo frame into a family dashboard: unlock it, root it, replace the vendor app, and run your own web page full screen.
 
 **TLDR:** buy a $50 frame, point an agent at this repo and let 'er rip!

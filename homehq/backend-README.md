@@ -46,26 +46,29 @@ On Apple silicon with macOS 14+, or supported Linux, the native runtime needs
 `tar`, initial download access and writable CLI storage, but no Docker daemon.
 Docker is another supported runtime. See [native runtime requirements](https://supabase.com/docs/guides/local-development/docker-and-native-runtimes).
 
-From this directory (`homehq/`), using the pinned CLI:
+From this directory (`homehq/`), start a disposable local stack:
 
 ```sh
-supabase --version
-supabase stack --help
-supabase start --runtime native --eager
-supabase db reset --local
-supabase test db supabase/tests/homehq.test.sql
+python3 tools/local.py start
+python3 tools/local.py reset
+python3 tools/local.py test
 python3 tools/check_live.py
 ```
 
-`--eager` keeps Auth, REST, Realtime and Storage running during integration tests.
+The helper downloads and checksum-verifies CLI 2.120.0 into `.tools/`, uses an
+isolated `.supabase-home/`, and saves `.local.private.json` for the wire checks
+and companion. No global CLI installation is needed. **Reset recreates local
+data; omit it when keeping an existing development household.** The helper's
+`--eager` startup keeps Auth, REST, Realtime and Storage running during tests.
 The local seed creates the private photos bucket. It does not create a public
 password or reusable session: sign up through the companion, then call
 `homehq_seed_demo()` as the signed-in owner. The local email-confirmation setting
 lets a developer try that flow without an external SMTP provider.
 
-`supabase status` returns this stack's endpoints and keys. The browser needs only
-its API URL and publishable key. CLI status also contains privileged local keys;
-do not paste the whole status output into a public config, screenshot or badge.
+`python3 tools/local.py status` refreshes the private metadata without printing
+keys. The [companion helper](README.md#companion-editor) reads that file to configure
+the browser with only the API URL and publishable key. Raw CLI status also contains
+privileged local keys; do not copy the whole output into a public config or badge.
 The local development services stay on the development machine; a physical
 badge's TLS/network proof uses the separately deployed hosted project.
 
@@ -75,14 +78,28 @@ badge's TLS/network proof uses the separately deployed hosted project.
 that stay in Git once they have been applied or shared. `pg-delta` orders SQL
 dependencies, so there is no legacy `schema_paths` list to maintain.
 
+After local setup, run from `homehq/`. The subshell selects the same isolated
+CLI home as the helper without changing your normal management login:
+
 ```sh
-supabase db schema declarative sync --help
-supabase db schema declarative sync --name descriptive_change --no-apply --strict-coverage
-supabase migration up --local
-supabase test db supabase/tests/homehq.test.sql
+(
+  export SUPABASE_HOME="$PWD/.supabase-home"
+  .tools/supabase db schema declarative sync --help
+  .tools/supabase db schema declarative sync --name descriptive_change --no-apply --strict-coverage
+)
 ```
 
-Review the generated SQL before applying it. `sync` compares declared files with
+Review the generated SQL, then apply and test it locally:
+
+```sh
+(
+  export SUPABASE_HOME="$PWD/.supabase-home"
+  .tools/supabase migration up --local
+  .tools/supabase test db
+)
+```
+
+`sync` compares declared files with
 migration history, rather than reading local Studio edits. With `pg-delta`,
 `db diff` compares the live database with migrations and does not use the schema
 files. See [Declarative Schemas 2.0](https://supabase.com/docs/guides/local-development/declarative-database-schemas).
@@ -91,16 +108,18 @@ same change in both the schema and a guessed migration filename.
 
 ## Deploy to your own Supabase project
 
-Create a fresh project in your account, then work from this directory. Confirm
-the CLI's resolved target before pushing; use a project dedicated to Home HQ.
+Create a fresh project in your account, then work from this directory (`homehq/`).
+Install the pinned CLI with the helper; `install` does not start a local stack.
+Confirm the CLI's resolved target before pushing; use a project dedicated to Home HQ.
 
 ```sh
-supabase login
-supabase link --project-ref YOUR_HOMEHQ_PROJECT_REF
-supabase config diff
-supabase config push
-supabase db push --include-seed --dry-run
-supabase db push --include-seed
+python3 tools/local.py install
+.tools/supabase login
+.tools/supabase link --project-ref YOUR_HOMEHQ_PROJECT_REF
+.tools/supabase config diff
+.tools/supabase config push
+.tools/supabase db push --include-seed --dry-run
+.tools/supabase db push --include-seed
 ```
 
 Use the companion's hosted origin for `auth.site_url` and redirect URLs when

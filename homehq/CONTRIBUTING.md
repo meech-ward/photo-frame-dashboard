@@ -2,7 +2,8 @@
 
 This repository is a Git fork of
 [wesbos/photo-frame-dashboard](https://github.com/wesbos/photo-frame-dashboard).
-Its original `dashboard/`, frame tools and README are preserved. The connected
+Its original `dashboard/` and frame tools are preserved; the root README adds a
+Home HQ entry note above the original frame instructions. The connected
 frontend reuses 29 pinned original files, verified by
 `node homehq/web/tools/check-upstream.mjs`; the Supabase integration and native
 device ports are additive code under `homehq/`.
