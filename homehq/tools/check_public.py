@@ -48,14 +48,21 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--starter", type=Path, help="also check a generated starter ZIP")
     args = parser.parse_args()
-    names = subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT).decode().split("\0")
-    # Use all tracked paths for link resolution, while reporting only this fork's
-    # additions. Wes's unrelated tooling and historical guides are unchanged.
-    files = {name: (ROOT / name).read_bytes() for name in names if name}
-    scoped = {name: payload for name, payload in files.items() if name == "HOMEHQ.md" or name.startswith("homehq/")}
-    # Outside guides can be relative in a checkout; their presence still counts.
-    scoped.update({name: b"" for name in files if name not in scoped})
-    check(scoped, "tracked checkout")
+    tracked = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, text=True)
+    if tracked.returncode:
+        # Extracted starters deliberately have no Git metadata. They can check
+        # an archive, but must not mistake untracked local state for public source.
+        if not args.starter:
+            parser.error("source checks require a Git checkout; use --starter path/to/homehq-starter.zip to check an archive")
+    else:
+        names = tracked.stdout.split("\0")
+        # Use all tracked paths for link resolution; inspect this fork's entry
+        # guides and additions without auditing unrelated Android-frame scripts.
+        files = {name: (ROOT / name).read_bytes() for name in names if name}
+        scoped = {name: payload for name, payload in files.items() if name in ("README.md", "HOMEHQ.md") or name.startswith("homehq/")}
+        # Outside guides can be relative in a checkout; their presence still counts.
+        scoped.update({name: b"" for name in files if name not in scoped})
+        check(scoped, "tracked checkout")
     if args.starter:
         with zipfile.ZipFile(args.starter) as archive:
             check({name: archive.read(name) for name in archive.namelist() if not name.endswith("/")}, "starter ZIP")
