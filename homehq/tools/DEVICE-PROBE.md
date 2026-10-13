@@ -1,5 +1,35 @@
 # Installed Home HQ acceptance probe
 
+## JPEG photos on either explicitly selected demo Tufty
+
+`jpeg_device_probe.py` checks the installed compiled app with existing household
+photos. It accepts the two known Tufty UIDs only, requires `_mpy=7942`, and never
+installs files, switches accounts or writes cloud data. The host first verifies
+the installed app hashes and supplies the actual USB identity:
+
+```sh
+mpremote connect id:03bfbc20532aa948 \
+  exec 'HOMEHQ_JPEG_PROBE_OPTIONS={"uid":"03bfbc20532aa948","timeout_ms":45000}' \
+  run homehq/tools/jpeg_device_probe.py
+```
+
+It waits for Live, preserves the existing identity, and requires an empty outbox.
+Two existing `jpeg_path` rows must render through the actual app with native
+320×240 decode, matching content hashes and `.img` cache files. Uncached photos
+require exactly one download each. Checkpoint reconstruction must return the
+same local file without another HTTP request. Output contains measurements and
+booleans, never photo paths, captions or credentials. Hardware switches and
+optical appearance are not checked.
+
+After a host-requested hard reset and USB re-enumeration, use options
+`{"uid":"03bfbc20532aa948","require_cached":true,"offline_cache":true}`.
+This suppresses network polling during the bounded check, so a successful HTTP
+retry cannot hide a missing persisted JPEG. Both photos must render from their
+saved files with zero downloads. Restore the normal interactive app afterward;
+these probes return to REPL and do not leave its event loop running.
+
+## General page and networking probe
+
 `device_probe.py` opens **installed compiled** `/system/apps/homehq` through
 `badgeware.launch`. It accepts only Tufty UID `6d9430717fc47ddf` and runtime
 `_mpy=7942`; it refuses Pico `E7E7D70437B93611`, source shadows and an incomplete

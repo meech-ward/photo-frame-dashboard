@@ -120,7 +120,7 @@ or another project, follow `web/README.md` and install from its lockfile.
 | Device | Recorded acceptance / latest state |
 | --- | --- |
 | Tufty `6d9430717fc47ddf` | Full earlier native Auth/rotation/recovery, private photo/storage and cross-account Realtime acceptance; member run used Claudia. Latest countdown `view.mpy` is now installed and native75/MIN pixels match the other board exactly. All196 other system/state hashes matched. It had no saved session/cache before this update and was handed back at normal sign-in. |
-| Tufty `03bfbc20532aa948` | Same 20-module app, independently logged in as Wes; latest countdown `view.mpy` installed. Interactive app returned Live/revision 238/pending 0; all 197 unrelated system/state hashes matched during the UI copy. |
+| Tufty `03bfbc20532aa948` | JPEG app checkpoint `9f96ad4b` installed 2026-10-13; all 30 app hashes match, 189 unrelated system files unchanged. Existing login/config preserved. Two real JPEGs download once and render natively; both survive restart and render offline with zero downloads. Normal interactive handback is tracked in [photo evidence](https://github.com/meech-ward/select-badge/blob/main/benchmark/results/reports/2026-10-12-homehq-photo-recovery.md#connected-tufty-jpeg-acceptance-2026-10-13). |
 | Pico `e7e7d70437b93611` | Explicitly excluded; never opened or modified. |
 
 Both Tuftys use `bw-1.29.0-gc` (2026-09-22), `_mpy=7942`. Firmware was not
@@ -183,9 +183,10 @@ Uploaded photo descriptors now carry a PNG `path` and optional `jpeg_path`.
 Tufty prefers the baseline JPEG; the Chromatic retains the streaming PNG path.
 Use the [photo contract](CONTRACT.md) when adding another device instead of
 assuming a filename extension or copying a device-specific cache implementation.
-The JPEG update is prepared and the hosted variants are verified; neither Tufty
-has that app update installed yet. Reconnect each board for installation and
-live photo/restart acceptance, preserving its login, Wi-Fi and unrelated state.
+The JPEG update and hosted variants are verified. Tufty `03bfbc20532aa948` now
+has the update and passes live photo/restart acceptance. Tufty
+`6d9430717fc47ddf` still needs installation when reconnected. Preserve its login,
+Wi-Fi and unrelated state.
 
 `Service` accepts an injected transport and configurable `state_root`. Preserve
 snapshot/status/command/poll, desired-value conflicts/retries, account-separated
