@@ -284,6 +284,31 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(path, "/app/assets/photo-coast.png")
         self.assertEqual(len(self.transport.photos), 1)
 
+    def test_jpeg_variant_is_preferred_and_uses_a_format_neutral_cache_slot(self):
+        photo = {"id": "p1", "path": "owner/photo.png", "jpeg_path": "owner/photo.jpg"}
+        self.assertEqual(self.service.photo_path(photo), "/app/assets/photo-coast.png")
+        self.assertEqual(self.transport.photos, [("owner/photo.jpg", self.directory.name + "/homehq-photo-0.img")])
+
+    def test_existing_png_cache_and_new_jpeg_cache_both_survive_restart(self):
+        old, new = self.directory.name + "/homehq-photo-0.png", self.directory.name + "/homehq-photo-1.img"
+        Path(old).write_bytes(b"previous-png")
+        Path(new).write_bytes(b"new-jpeg")
+        cache.write(self.service.path, {"user_id": "owner", "snapshot": snapshot(), "pending": [],
+                    "photos": {"owner/old.png": old, "owner/new.jpg": new}})
+        transport = FakeTransport()
+        restarted = Service("/app", transport, self.directory.name, self.config)
+        self.assertEqual(restarted.photo_path({"path": "owner/old.png"}), old)
+        self.assertEqual(restarted.photo_path({"path": "owner/new.png", "jpeg_path": "owner/new.jpg"}), new)
+        self.assertEqual(transport.photos, [])
+
+    def test_completed_img_slot_removes_legacy_png_alias_for_the_same_slot(self):
+        legacy, local = self.directory.name + "/homehq-photo-0.png", self.directory.name + "/homehq-photo-0.img"
+        self.service._photo_cache = {"owner/old.png": legacy}
+        Path(local).write_bytes(b"new-jpeg")
+        self.transport.events.append({"kind": "photo", "path": "owner/new.jpg", "local_path": local})
+        self.service.poll(0)
+        self.assertEqual(self.service._photo_cache, {"owner/new.jpg": local})
+
     def test_corrupt_photo_cache_metadata_falls_back_and_queues_download(self):
         cache.write(self.service.path, {"user_id": "owner", "snapshot": snapshot(), "pending": [], "photos": {
             "owner/integer.png": 7, "owner/object.png": {}, "owner/elsewhere.png": "/wrong/place.png",
@@ -307,8 +332,8 @@ class ServiceTests(unittest.TestCase):
         transport._photo_active = "owner/active.png"
         transport._photos = []
         self.service._transport = transport
-        slot0 = self.directory.name + "/homehq-photo-0.png"
-        slot1 = self.directory.name + "/homehq-photo-1.png"
+        slot0 = self.directory.name + "/homehq-photo-0.img"
+        slot1 = self.directory.name + "/homehq-photo-1.img"
         self.service._photo_slot = 1
         self.service._photo_cache = {"owner/previous.png": slot1}
         Path(slot1).write_bytes(b"previous-picture")
@@ -345,8 +370,8 @@ class ServiceTests(unittest.TestCase):
         transport._photos = []
         self.service._transport = transport
         self.service._photo_slot = 1
-        slot0 = self.directory.name + "/homehq-photo-0.png"
-        slot1 = self.directory.name + "/homehq-photo-1.png"
+        slot0 = self.directory.name + "/homehq-photo-0.img"
+        slot1 = self.directory.name + "/homehq-photo-1.img"
         for name in ("new1", "new2"):
             self.service.photo_path({"id": name, "path": "owner/" + name + ".png"})
         self.assertEqual(transport._photos, [("owner/new1.png", slot1), ("owner/new2.png", slot0)])

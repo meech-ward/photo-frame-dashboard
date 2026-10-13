@@ -223,7 +223,8 @@ class LoginServiceTests(unittest.TestCase):
         s, t = self.service()
         s.auth_state = "signed_in"
         s._identity = "person-auth"
-        for name in ("homehq-cache.json", "homehq-session.json", "homehq-photo-0.png", "homehq-photo-1.png", "homehq-photo-0.png.tmp"):
+        for name in ("homehq-cache.json", "homehq-session.json", "homehq-photo-0.png", "homehq-photo-1.png", "homehq-photo-0.png.tmp",
+                     "homehq-photo-0.img", "homehq-photo-1.img", "homehq-photo-1.img.tmp"):
             Path(self.directory.name, name).write_text("old-private-data")
         keep = Path(self.directory.name, "homehq-config.json")
         keep.write_text("private-wifi-config")

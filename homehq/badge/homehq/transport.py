@@ -15,7 +15,69 @@ MAX_BODY = 32768
 MAX_PHOTO = 327680
 
 
+def valid_jpeg(body):
+    # The companion emits one baseline 8-bit RGB scan. Header dimensions must
+    # be checked before native decode allocates a full RGBA image; progressive
+    # or multi-scan files have not been proved on the Tufty's JPEG decoder.
+    if len(body) < 4 or not body.startswith(b"\xff\xd8") or not body.endswith(b"\xff\xd9"):
+        return False
+    offset = 2
+    frame = quantization = huffman = False
+    while offset < len(body) - 2:
+        if body[offset] != 255:
+            return False
+        while offset < len(body) and body[offset] == 255:
+            offset += 1
+        if offset >= len(body):
+            return False
+        marker = body[offset]
+        offset += 1
+        if marker in (0, 216, 217) or 208 <= marker <= 215 or offset + 2 > len(body):
+            return False
+        length = struct.unpack(">H", body[offset:offset + 2])[0]
+        end = offset + length
+        if length < 2 or end > len(body) - 2:
+            return False
+        if marker == 192:
+            if (frame or length != 17 or body[offset + 2] != 8
+                    or struct.unpack(">HH", body[offset + 3:offset + 7]) != (240, 320)
+                    or body[offset + 7] != 3):
+                return False
+            frame = True
+        elif 193 <= marker <= 207 and marker != 196:
+            return False
+        elif marker == 219:
+            quantization = True
+        elif marker == 196:
+            huffman = True
+        elif marker == 218:
+            if (not frame or not quantization or not huffman or length != 12 or end >= len(body) - 2
+                    or body[offset + 2] != 3 or body[end - 3:end] != b"\x00\x3f\x00"):
+                return False
+            # C-backed find skips entropy bytes without a Python loop per pixel.
+            # Escaped FF bytes and restart markers are legal; a second scan,
+            # early EOI or missing EOI is an incomplete/unsupported photograph.
+            cursor = end
+            while cursor < len(body):
+                cursor = body.find(b"\xff", cursor)
+                if cursor < 0 or cursor + 1 >= len(body):
+                    return False
+                while cursor + 1 < len(body) and body[cursor + 1] == 255:
+                    cursor += 1
+                marker = body[cursor + 1]
+                if marker == 217:
+                    return cursor + 2 == len(body)
+                if marker != 0 and not 208 <= marker <= 215:
+                    return False
+                cursor += 2
+            return False
+        offset = end
+    return False
+
+
 def valid_photo(body):
+    if body.startswith(b"\xff\xd8"):
+        return valid_jpeg(body)
     # Fixed native dimensions cap decoded memory as well as download bytes.
     # Interlaced/high-depth files are outside the companion converter contract.
     return (len(body) >= 33 and body.startswith(b"\x89PNG\r\n\x1a\n")
@@ -430,21 +492,29 @@ class SupabaseTransport:
         # Service owns exactly these two cache files. Never let its deletion
         # path expand to credentials, another app's files, or a third slot.
         if (not isinstance(local_path, str) or ".." in local_path
-                or local_path.rsplit("/", 1)[-1] not in ("homehq-photo-0.png", "homehq-photo-1.png")):
+                or local_path.rsplit("/", 1)[-1] not in ("homehq-photo-0.png", "homehq-photo-1.png", "homehq-photo-0.img", "homehq-photo-1.img")):
             raise ValueError("invalid photo slot")
         status, body = await self.http.request("/storage/v1/object/authenticated/homehq-photos/" + path,
             {"apikey": self.key, "Authorization": "Bearer " + self.session["access_token"]}, method="GET", max_bytes=MAX_PHOTO)
-        if status != 200 or len(body) > MAX_PHOTO or not valid_photo(body):
+        if (status != 200 or len(body) > MAX_PHOTO or not valid_photo(body)
+                or (local_path.endswith(".png") and not body.startswith(b"\x89PNG\r\n\x1a\n"))):
             raise ValueError("invalid photo")
         # The actual Tufty /state volume is 1 MiB: two 320 KiB photos plus
         # another temporary photo and ~103 KiB of existing/cache/Auth state do
-        # not fit. Keep the old slot through HTTP/PNG validation, then release
+        # not fit. Keep the old slot through HTTP/image validation, then release
         # only that evicted slot before writing: peak photo storage is 640 KiB.
-        try:
-            os.remove(local_path)
-        except OSError as error:
-            if error.args[0] != errno.ENOENT:
-                raise
+        # Native image.load dispatches by magic, so .img holds either codec.
+        # Retire the paired legacy PNG and either interrupted temporary file;
+        # the format transition must still occupy exactly two logical slots.
+        base = local_path.rsplit(".", 1)[0]
+        paired = base + (".png" if local_path.endswith(".img") else ".img")
+        for owned in (local_path, paired):
+            for suffix in ("", ".tmp"):
+                try:
+                    os.remove(owned + suffix)
+                except OSError as error:
+                    if error.args[0] != errno.ENOENT:
+                        raise
         temporary = local_path + ".tmp"
         try:
             view = memoryview(body)

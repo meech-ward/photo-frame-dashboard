@@ -56,11 +56,18 @@ desired-state retries retain the original completion actor, metadata edits canno
 claim it, and undo clears it. `done_by` remains the person credited with chore
 stars; it can differ from the Auth account that actually helped.
 
-The private Storage bucket is `homehq-photos`. Objects are 320x240 non-interlaced
-PNG with paths `<owner UUID>/<content hash>.png`. Bundled sample artwork keeps
-the offline first launch complete. Uploading a photo replaces the sample metadata.
-The prepared PNG is at most 327,680 bytes, exactly 320×240, 8-bit RGB/indexed/RGBA
-and non-interlaced. Native downloads validate IHDR before passing it to the codec.
+The private Storage bucket is `homehq-photos`. Each upload produces an opaque
+320×240 crop in two formats, each addressed by its own SHA-256: `path` is
+`<owner UUID>/<hash>.png`, and optional `jpeg_path` is
+`<owner UUID>/<hash>.jpg`. The Tufty prefers `jpeg_path`; older clients and the
+Chromatic use the PNG `path`. Existing PNG-only rows need no migration of their
+image bytes. Bundled sample artwork keeps the offline first launch complete.
+The browser accepts JPEG, PNG and WebP inputs and encodes a baseline JPEG at
+quality 0.85 alongside the lossless PNG. It uploads both before publishing the
+photo metadata. Each output is capped at 327,680 bytes; PNG is 8-bit
+RGB/indexed/RGBA and non-interlaced, JPEG is 8-bit baseline RGB. Native downloads
+validate format and dimensions before cache publication. Neither a password
+nor an expiring signed URL is stored with these image paths.
 
 Events may include `start_offset_minutes` and `end_offset_minutes`, computed
 from the home's IANA timezone at each endpoint. The badge uses those optional

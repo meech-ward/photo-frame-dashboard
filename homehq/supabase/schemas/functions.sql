@@ -152,7 +152,8 @@ begin
       from public.homehq_devices d where d.owner_id = v_owner), '[]'::jsonb),
     'photos', coalesce((select jsonb_agg(jsonb_build_object(
       'id', p.id, 'path', p.path, 'asset', p.asset, 'caption', p.caption, 'place', p.place
-    ) order by p.sort_order, p.id) from public.homehq_photos p where p.owner_id = v_owner), '[]'::jsonb),
+    ) || jsonb_strip_nulls(jsonb_build_object('jpeg_path', p.jpeg_path))
+      order by p.sort_order, p.id) from public.homehq_photos p where p.owner_id = v_owner), '[]'::jsonb),
     'weather', coalesce((select data from public.homehq_cards where owner_id = v_owner and section = 'weather'), '{}'::jsonb),
     'home_status', coalesce((select data from public.homehq_cards where owner_id = v_owner and section = 'home_status'), '{}'::jsonb)
       || jsonb_build_object('lights_on', (select count(*) from public.homehq_devices where owner_id = v_owner and type = 'light' and on_state),

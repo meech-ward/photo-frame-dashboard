@@ -50,9 +50,11 @@ Each browser and device signs in independently. They share the household's
 database rows and private Realtime channel, while Auth records who performed
 an action. See [the web guide](homehq/web/README.md) for the exact data flow.
 
-Use **Photos → Add photo** in the editor. It prepares a 320×240 PNG, uploads it
-to the private bucket and registers its `homehq_photos` row. Files dropped
-directly into Storage need that metadata row before a display can find them.
+Use **Photos → Add photo** in the editor. It prepares 320×240 JPEG and PNG
+variants, uploads both to the private bucket and registers its `homehq_photos`
+row. Updated Tufty clients and the web app prefer JPEG; Chromatic and older
+clients use PNG. Files dropped directly into Storage need that metadata row
+before a display can find them.
 
 Weather, home controls and agent-provider readings remain visibly labelled
 samples. The integration does not connect real appliances or provider accounts.

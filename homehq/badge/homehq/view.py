@@ -396,7 +396,7 @@ class HomeView:
             self.empty("Your next memory.", "Add a photo in the companion.")
             return
         path = photo_path or (self.root + "/" + (row.get("asset") or "assets/photo-coast.png"))
-        source = row.get("path")
+        source = row.get("jpeg_path") or row.get("path")
         # Two disk slots are reused for different Storage objects. A filename
         # alone can retain the previous photo's pixels; a failed decode must
         # also remain retryable when a later frame or download repairs the file.

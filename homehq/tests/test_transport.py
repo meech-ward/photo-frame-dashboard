@@ -79,6 +79,30 @@ def maximum_photo():
     return body[:-12] + chunk + body[-12:]
 
 
+def jpeg(width=320, height=240, depth=8, frame=192):
+    # Marker-level fixtures exercise the transfer guard, not entropy decoding;
+    # the native gate separately decodes the real browser-generated JPEG bytes.
+    def segment(marker, data):
+        return bytes((255, marker)) + struct.pack(">H", len(data) + 2) + data
+    header = bytes((depth,)) + struct.pack(">HH", height, width) + b"\x03\x01\x22\x00\x02\x11\x00\x03\x11\x00"
+    return (b"\xff\xd8" + segment(219, b"\x00" + bytes(64))
+            + segment(196, b"\x00\x01" + bytes(15) + b"\x00")
+            + segment(frame, header)
+            + segment(218, b"\x03\x01\x00\x02\x11\x03\x11\x00\x3f\x00")
+            + b"\x12\x34\xff\x00\x56\xff\xd0\x78\xff\xd9")
+
+
+def maximum_jpeg():
+    body = jpeg()
+    padding = MAX_PHOTO - len(body)
+    segments = []
+    while padding:
+        length = min(padding, 65537)
+        segments.append(b"\xff\xef" + struct.pack(">H", length - 2) + b"x" * (length - 4))
+        padding -= length
+    return body[:2] + b"".join(segments) + body[2:]
+
+
 class QuotaFilesystem:
     """Byte-accounted writes: a third capped photo cannot fit on this volume."""
 
@@ -681,6 +705,62 @@ class PhotoTests(unittest.IsolatedAsyncioTestCase):
         for body in (png(width=640), png(height=480), png(depth=16), png(kind=0), png(interlace=1), b"\x89PNG\r\n\x1a\n"):
             self.assertFalse(valid_photo(body))
 
+    def test_baseline_jpeg_validation_bounds_dimensions_and_rejects_unproved_formats(self):
+        self.assertTrue(valid_photo(jpeg()))
+        for body in (jpeg(width=640), jpeg(height=480), jpeg(depth=12), jpeg(frame=194), jpeg(frame=193),
+                     jpeg()[:-2], jpeg() + b"trailing", jpeg().replace(b"\xff\xd9", b"\xff\xd9extra\xff\xd9"),
+                     jpeg().replace(b"\xff\xda\x00\x0c", b"\xff\xda\xff\xff"), b"\xff\xd8\xff\xd9"):
+            with self.subTest(length=len(body)):
+                self.assertFalse(valid_photo(body))
+
+    async def test_jpeg_transition_retires_legacy_png_and_keeps_two_capped_slots(self):
+        body = maximum_jpeg()
+        self.assertEqual(len(body), MAX_PHOTO)
+        self.assertTrue(valid_photo(body))
+        local, legacy, other = "/state/homehq-photo-0.img", "/state/homehq-photo-0.png", "/state/homehq-photo-1.png"
+        old = maximum_photo()
+        filesystem = QuotaFilesystem({legacy: old, other: old, "/state/auth-and-other-state": b"s" * (103 * 1024)})
+        transport = self.transport(body)
+        patches = self.filesystem_patches(filesystem)
+        with patches[0], patches[1], patches[2]:
+            await transport.download_photo("family/new.jpg", local)
+        self.assertEqual(filesystem.files, {local: body, other: old, "/state/auth-and-other-state": b"s" * (103 * 1024)})
+        self.assertEqual(filesystem.max_photo_bytes, 2 * MAX_PHOTO)
+        self.assertEqual(transport.events[-1], {"kind": "photo", "path": "family/new.jpg", "local_path": local})
+
+    async def test_jpeg_is_not_written_to_a_png_named_slot_and_old_bytes_survive(self):
+        local = "/state/homehq-photo-0.png"
+        filesystem = QuotaFilesystem({local: b"previous-picture"})
+        transport = self.transport(jpeg())
+        patches = self.filesystem_patches(filesystem)
+        with patches[0], patches[1], patches[2], self.assertRaises(ValueError):
+            await transport.download_photo("family/new.jpg", local)
+        self.assertEqual(filesystem.files, {local: b"previous-picture"})
+        self.assertEqual(filesystem.operations, [])
+
+    async def test_invalid_jpeg_keeps_legacy_png_before_slot_eviction(self):
+        local, legacy = "/state/homehq-photo-0.img", "/state/homehq-photo-0.png"
+        filesystem = QuotaFilesystem({legacy: b"previous-picture"})
+        transport = self.transport(jpeg(frame=194))
+        patches = self.filesystem_patches(filesystem)
+        with patches[0], patches[1], patches[2], self.assertRaises(ValueError):
+            await transport.download_photo("family/new.jpg", local)
+        self.assertEqual(filesystem.files, {legacy: b"previous-picture"})
+        self.assertEqual(filesystem.operations, [])
+
+    async def test_interrupted_jpeg_migration_cleans_both_temporary_extensions(self):
+        body = maximum_jpeg()
+        local, legacy, other = "/state/homehq-photo-0.img", "/state/homehq-photo-0.png", "/state/homehq-photo-1.img"
+        filesystem = QuotaFilesystem({legacy + ".tmp": maximum_photo(), other: body})
+        filesystem.fail_after = 127
+        transport = self.transport(body)
+        patches = self.filesystem_patches(filesystem)
+        with patches[0], patches[1], patches[2], self.assertRaises(OSError):
+            await transport.download_photo("family/new.jpg", local)
+        self.assertEqual(filesystem.files, {other: body})
+        self.assertLessEqual(filesystem.max_photo_bytes, 2 * MAX_PHOTO)
+        self.assertEqual(transport.events, [])
+
     async def test_valid_photo_is_atomically_saved_with_content_path_event(self):
         session = {"user_id": "owner", "refresh_token": "refresh", "access_token": "access"}
         transport = SupabaseTransport({"url": "https://project.supabase.co", "publishable_key": "sb_publishable_test", "home_id": "family"}, session)
@@ -728,7 +808,8 @@ class PhotoTests(unittest.IsolatedAsyncioTestCase):
         patches = self.filesystem_patches(filesystem)
         with patches[0], patches[1], patches[2]:
             await transport.download_photo("family/new.png", local)
-        self.assertEqual(filesystem.operations[0:2], [("remove", local), ("open", local + ".tmp")])
+        self.assertEqual(filesystem.operations[0], ("remove", local))
+        self.assertEqual(next(operation for operation in filesystem.operations if operation[0] == "open"), ("open", local + ".tmp"))
         self.assertEqual(filesystem.files, {local: body, other: body, "/state/unrelated-and-auth": state})
         self.assertEqual(filesystem.max_photo_bytes, 2 * MAX_PHOTO)
         self.assertNotIn(local + ".tmp", filesystem.files)

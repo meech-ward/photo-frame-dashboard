@@ -73,10 +73,10 @@ create policy homehq_photo_read on storage.objects for select to authenticated
   using (bucket_id = 'homehq-photos' and (storage.foldername(name))[1] = (select homehq_private.current_home_id())::text);
 create policy homehq_photo_insert on storage.objects for insert to authenticated
   with check (bucket_id = 'homehq-photos'
-    and name ~ ('^' || (select homehq_private.current_home_id())::text || '/[0-9a-f]{64}\.png$'));
+    and name ~ ('^' || (select homehq_private.current_home_id())::text || '/[0-9a-f]{64}\.(png|jpg)$'));
 create policy homehq_photo_update on storage.objects for update to authenticated
   using (bucket_id = 'homehq-photos' and (storage.foldername(name))[1] = (select homehq_private.current_home_id())::text)
   with check (bucket_id = 'homehq-photos'
-    and name ~ ('^' || (select homehq_private.current_home_id())::text || '/[0-9a-f]{64}\.png$'));
+    and name ~ ('^' || (select homehq_private.current_home_id())::text || '/[0-9a-f]{64}\.(png|jpg)$'));
 create policy homehq_photo_delete on storage.objects for delete to authenticated
   using (bucket_id = 'homehq-photos' and (storage.foldername(name))[1] = (select homehq_private.current_home_id())::text);

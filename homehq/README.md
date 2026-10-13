@@ -92,11 +92,13 @@ Recovery releases a failed socket and rejoins; each successful join/rejoin
 refreshes the authoritative snapshot.
 Snapshot responses are capped at 32 KiB. Two downloaded photo slots each accept
 up to 320 KiB. On the Tufty's 1 MiB state volume, replacement retains the old
-slot until HTTP and PNG validation succeed, then frees only that slot before
+slot until HTTP and image validation succeed, then frees only that slot before
 writing its temporary file. Complete write and rename precede cache publication;
 failed writes clean up the temporary file and retry with bundled artwork visible.
 Peak photo storage is 640 KiB, leaving room for Auth, cached data and existing
-state. A quota simulation covers full-size replacement and failure recovery;
+state. New uploaded photos use smaller baseline JPEGs on the Tufty; the same
+upload retains a normalized PNG for the Chromatic and older clients. Existing
+PNG-only rows and cache metadata remain supported. A quota simulation covers full-size replacement and failure recovery;
 the physical Tufty acceptance probe also proves capped replacement, real partial
 flash cleanup/retry and native PNG decode. Its measured minimum free space was
 216 KiB with 103 KiB of other state. See [the photo probe](tools/PHOTO-STORAGE-PROBE.md).

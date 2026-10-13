@@ -179,6 +179,10 @@ For a native port, reuse `CONTRACT.md` and pure `model.py`. Replace `__init__.py
 Badgeware lifecycle/injected globals, `view.py`/`SignInView`'s hardcoded 320×240
 picovector/fonts, and A/B/C/UP/DOWN input with the target's display/runtime/input.
 Choose framebuffer, photo and decoded-memory budgets for the new hardware.
+Uploaded photo descriptors now carry a PNG `path` and optional `jpeg_path`.
+Tufty prefers the baseline JPEG; the Chromatic retains the streaming PNG path.
+Use the [photo contract](CONTRACT.md) when adding another device instead of
+assuming a filename extension or copying a device-specific cache implementation.
 
 `Service` accepts an injected transport and configurable `state_root`. Preserve
 snapshot/status/command/poll, desired-value conflicts/retries, account-separated

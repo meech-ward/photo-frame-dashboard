@@ -61,7 +61,8 @@ class Service:
         self._session_retry_at = 0
         self._sequence = max([c.get("sequence", 0) for c in self._queue] or [0])
         photos = saved.get("photos") if isinstance(saved, dict) and (not self._config or saved.get("user_id") == self._identity) else None
-        slots = (state_root + "/homehq-photo-0.png", state_root + "/homehq-photo-1.png")
+        slots = tuple(state_root + "/homehq-photo-" + str(slot) + extension
+                      for slot in (0, 1) for extension in (".png", ".img"))
         # These two owned slots are the whole photo cache. Reject corrupt JSON
         # values before open() can raise a TypeError inside the Photos screen.
         self._photo_cache = {key: value for key, value in photos.items()
@@ -91,7 +92,7 @@ class Service:
         # Exact app-owned files only. Shared Wi-Fi/project configuration and
         # other badge apps' state survive an account switch.
         cleared = True
-        for name in ("homehq-cache.json", "homehq-session.json", "homehq-photo-0.png", "homehq-photo-1.png"):
+        for name in ("homehq-cache.json", "homehq-session.json", "homehq-photo-0.png", "homehq-photo-1.png", "homehq-photo-0.img", "homehq-photo-1.img"):
             for suffix in ("", ".tmp"):
                 try:
                     os.remove(self.state_root + "/" + name + suffix)
@@ -334,7 +335,8 @@ class Service:
                 # reserved its slot. Completion names the bytes now in that
                 # file, so remove every earlier same-slot alias before caching.
                 local = event["local_path"]
-                self._photo_cache = {key: value for key, value in self._photo_cache.items() if value != local}
+                self._photo_cache = {key: value for key, value in self._photo_cache.items()
+                                     if value.rsplit(".", 1)[0] != local.rsplit(".", 1)[0]}
                 self._photo_cache[event["path"]] = local
                 self._dirty_at = self._now if self._dirty_at is None else self._dirty_at
                 changed = True
@@ -396,7 +398,9 @@ class Service:
         return changed
 
     def photo_path(self, photo):
-        path = photo.get("path")
+        # New snapshots carry a smaller baseline JPEG for Tufty; the PNG path
+        # remains the contract for older badges and other device decoders.
+        path = photo.get("jpeg_path") or photo.get("path")
         if path:
             local = self._photo_cache.get(path)
             try:
@@ -407,13 +411,14 @@ class Service:
                     # Two slots hold at most 640 KiB on the 1 MiB state volume.
                     # Transport validates the incoming photo before freeing
                     # this evicted slot, so its temporary file adds no peak.
-                    local = self.state_root + "/homehq-photo-" + str(self._photo_slot) + ".png"
+                    local = self.state_root + "/homehq-photo-" + str(self._photo_slot) + ".img"
                     # Repeated frames can ask for an active/queued URI. Only a
                     # newly accepted reservation may evict another useful image
                     # or advance the round-robin slot.
                     if self._transport.photo(path, local):
                         self._photo_slot = (self._photo_slot + 1) % 2
-                        self._photo_cache = {key: value for key, value in self._photo_cache.items() if value != local}
+                        self._photo_cache = {key: value for key, value in self._photo_cache.items()
+                                             if value.rsplit(".", 1)[0] != local.rsplit(".", 1)[0]}
         asset = photo.get("asset") or "assets/photo-coast.png"
         if not asset.startswith("assets/") or ".." in asset:
             asset = "assets/photo-coast.png"

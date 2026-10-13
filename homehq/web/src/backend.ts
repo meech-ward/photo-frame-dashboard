@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient, type Session, type RealtimeChannel } from '@supabase/supabase-js';
 import type { Config, Snapshot, Kind, Editable, Chore, Shopping, Device, Event, Photo } from './types';
 import { coalescePNGIDAT, MAX_BADGE_PNG_BYTES } from './badge-png';
+import { validateBadgeJPEG } from './badge-jpeg';
 
 export function validateConfig(config: Config): Config {
   const url = new URL(config.url.trim());
@@ -162,8 +163,9 @@ export class HomeHQBackend {
         const snapshot = data as Snapshot;
         for (let i = 0; i < snapshot.photos.length; i++) {
           const photo = snapshot.photos[i];
-          if (photo.path && photo.path.startsWith(`${snapshot.home.id || owner}/`)) {
-            const result = await this.client.storage.from('homehq-photos').createSignedUrl(photo.path, 3600);
+          const path = photo.jpeg_path || photo.path;
+          if (path && path.startsWith(`${snapshot.home.id || owner}/`)) {
+            const result = await this.client.storage.from('homehq-photos').createSignedUrl(path, 3600);
             if (result.error) throw result.error;
             photo.url = result.data.signedUrl;
           } else photo.url = i % 2 ? '/sample-mountain.svg' : '/sample-coast.svg';
@@ -215,6 +217,9 @@ export class HomeHQBackend {
       } else if (kind === 'photo') {
         const photo = item as Photo;
         row = { owner_id, id: photo.id, caption: photo.caption, place: photo.place, path: photo.path, asset: photo.asset || 'assets/photo-coast.png' };
+        // A caption edit from an older snapshot must not erase a prepared
+        // variant that this client has not received yet.
+        if (photo.jpeg_path !== undefined) row.jpeg_path = photo.jpeg_path;
       } else row = { ...item, owner_id };
       // Existing-row metadata edits must leave completion/version state alone.
       // An upsert could apply insertion defaults to an existing checklist row.
@@ -236,14 +241,20 @@ export class HomeHQBackend {
     if (error) throw error; await this.refresh();
   }
   async uploadPhoto(photo: Photo, file: File): Promise<void> {
-    const blob = await badgePNG(file);
-    const bytes = await blob.arrayBuffer();
-    const digest = await crypto.subtle.digest('SHA-256', bytes);
-    const hash = [...new Uint8Array(digest)].map((n) => n.toString(16).padStart(2, '0')).join('');
-    const path = `${this.homeId!}/${hash}.png`;
-    const { error } = await this.client.storage.from('homehq-photos').upload(path, blob, { contentType: 'image/png', upsert: true });
-    if (error) throw error;
-    await this.save('photo', { ...photo, path });
+    const { png, jpeg } = await badgePhotoVariants(file);
+    const upload = async (blob: Blob, extension: 'png' | 'jpg'): Promise<string> => {
+      const digest = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
+      const hash = [...new Uint8Array(digest)].map((n) => n.toString(16).padStart(2, '0')).join('');
+      const path = `${this.homeId!}/${hash}.${extension}`;
+      const { error } = await this.client.storage.from('homehq-photos').upload(path, blob, { contentType: blob.type, upsert: true });
+      if (error) throw error;
+      return path;
+    };
+    // Keep PNG for Chromatic and older clients. Only publish the two immutable
+    // paths after both uploads succeed, so a failed upload preserves the photo.
+    const path = await upload(png, 'png');
+    const jpeg_path = await upload(jpeg, 'jpg');
+    await this.save('photo', { ...photo, path, jpeg_path });
   }
   private async dropChannel(): Promise<void> { if (this.channel) { await this.client.removeChannel(this.channel); this.channel = null; } }
   async stop(): Promise<void> { this.active = false; this.unsubscribeAuth?.(); await this.dropChannel(); await this.client.auth.stopAutoRefresh(); }
@@ -251,20 +262,39 @@ export class HomeHQBackend {
 
 export { MAX_BADGE_PNG_BYTES } from './badge-png';
 
-export async function badgePNG(file: File): Promise<Blob> {
+async function photoCanvas(file: File): Promise<HTMLCanvasElement> {
   if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) throw new Error('Choose a JPEG, PNG or WebP photo.');
   if (file.size > 20 * 1024 * 1024) throw new Error('Choose a photo smaller than 20 MB.');
   const bitmap = await createImageBitmap(file);
   try {
     const canvas = document.createElement('canvas'); canvas.width = 320; canvas.height = 240;
     const context = canvas.getContext('2d'); if (!context) throw new Error('Your browser cannot prepare this photo.');
-    // Crop before scaling. A fixed 4:3 PNG bounds badge decode memory and
+    // Crop before scaling. Fixed 4:3 dimensions bound badge decode memory and
     // removes source EXIF/GPS metadata; the uploaded original is never stored.
     const ratio = Math.max(320 / bitmap.width, 240 / bitmap.height);
     context.fillStyle = '#f2eee6'; context.fillRect(0, 0, 320, 240);
     context.drawImage(bitmap, (320 - bitmap.width * ratio) / 2, (240 - bitmap.height * ratio) / 2, bitmap.width * ratio, bitmap.height * ratio);
-    const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('Could not prepare the photo.')), 'image/png'));
-    if (blob.size > MAX_BADGE_PNG_BYTES) throw new Error('The prepared photo is too large for the badge. Choose a simpler image.');
-    return new Blob([coalescePNGIDAT(new Uint8Array(await blob.arrayBuffer()))], { type: 'image/png' });
+    return canvas;
   } finally { bitmap.close(); }
+}
+
+function encodeCanvas(canvas: HTMLCanvasElement, type: 'image/png' | 'image/jpeg', quality?: number): Promise<Blob> {
+  return new Promise<Blob>((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('Could not prepare the photo.')), type, quality));
+}
+async function encodeBadgePNG(canvas: HTMLCanvasElement): Promise<Blob> {
+  const blob = await encodeCanvas(canvas, 'image/png');
+  if (blob.size > MAX_BADGE_PNG_BYTES) throw new Error('The prepared photo is too large for the badge. Choose a simpler image.');
+  return new Blob([coalescePNGIDAT(new Uint8Array(await blob.arrayBuffer()))], { type: 'image/png' });
+}
+export async function badgePNG(file: File): Promise<Blob> {
+  return encodeBadgePNG(await photoCanvas(file));
+}
+export async function badgePhotoVariants(file: File): Promise<{ png: Blob; jpeg: Blob }> {
+  const canvas = await photoCanvas(file);
+  const png = await encodeBadgePNG(canvas);
+  const jpeg = await encodeCanvas(canvas, 'image/jpeg', 0.85);
+  // Native JPEGdec requires baseline JPEG. Verify the browser's result rather
+  // than assuming every canvas encoder uses the same progressive settings.
+  validateBadgeJPEG(new Uint8Array(await jpeg.arrayBuffer()));
+  return { png, jpeg };
 }

@@ -125,11 +125,16 @@ create table public.homehq_photos (
   owner_id uuid not null default auth.uid() references public.homehq_homes(owner_id) on delete cascade,
   id text not null check (id ~ '^[a-z0-9_-]{1,64}$'),
   path text,
+  -- Keep the PNG for older clients and the Chromatic's streaming PNG decoder;
+  -- a Tufty can fetch the much smaller JPEG without changing that wire field.
+  jpeg_path text,
   asset text not null default 'assets/photo-coast.png' check (asset ~ '^assets/[a-z0-9_-]+\.png$'),
   caption text not null default '' check (char_length(caption) <= 60),
   place text not null default '' check (char_length(place) <= 80),
   sort_order integer not null default 0,
   primary key (owner_id, id),
   -- Content-addressed PNGs make caching safe without mutable remote filenames.
-  check (path is null or path ~ ('^' || owner_id::text || '/[0-9a-f]{64}\.png$'))
+  check (path is null or path ~ ('^' || owner_id::text || '/[0-9a-f]{64}\.png$')),
+  constraint homehq_photos_jpeg_path_check check (jpeg_path is null or (path is not null
+    and jpeg_path ~ ('^' || owner_id::text || '/[0-9a-f]{64}\.jpg$')))
 );

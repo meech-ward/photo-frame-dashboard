@@ -4,7 +4,7 @@ export interface Person { id: string; name: string; color: string; status: strin
 export interface Event { id: string; title: string; start: number; end: number; start_offset_minutes?: number; end_offset_minutes?: number; loc: string; notes: string; people: string[]; all_day: boolean; travel: number }
 export interface Chore { id: string; title: string; who: string; routine: string; stars: number; done: boolean; done_by: string | null; completed_by_user_id?: string | null; created_by_user_id?: string | null; version: number }
 export interface Shopping { id: string; name: string; category: string; quantity: number; store: string; note: string; done: boolean; completed_by_user_id?: string | null; created_by_user_id?: string | null; version: number }
-export interface Photo { id: string; caption: string; place: string; path: string | null; asset: string | null; url?: string }
+export interface Photo { id: string; caption: string; place: string; path: string | null; jpeg_path?: string | null; asset: string | null; url?: string }
 export interface Weather { temp: number; high: number; low: number; label: string; summary: string; sample: boolean }
 export interface Device { id: string; name: string; room: string; type: 'light' | 'lock' | 'garage'; on?: boolean; locked?: boolean; state?: string; level?: number; version: number; sample: boolean }
 export interface Agent { id: string; name: string; color: string; sample: boolean; meters: { label: string; used: number; reset_minutes: number }[]; week: number[] }

@@ -111,9 +111,12 @@ its own sample data through the authenticated RPC. `config pull` imports hosted
 setting changes; review that diff before committing it.
 
 The bucket's privacy, file-size and MIME settings are declared in `config.toml`;
-its owner-folder policies are in the schema. Only 320×240 non-interlaced PNG
-variants are meant for the badge. Upload tools compute their SHA-256 and use
-`<owner UUID>/<hash>.png`, then update `homehq_photos`. Uploaded objects are
+its owner-folder policies are in the schema. The browser crops JPEG, PNG and
+WebP uploads to 320×240, producing a baseline JPEG at quality 0.85 and a
+normalized non-interlaced PNG. Each output uses its own SHA-256 address:
+`<owner UUID>/<hash>.jpg` in `jpeg_path`, and `<owner UUID>/<hash>.png` in `path`.
+The Tufty prefers JPEG, while the Chromatic and older badges retain PNG support.
+Both private objects are uploaded before updating `homehq_photos`. Uploaded objects are
 separate from SQL migrations: metadata alone does not transfer image bytes to
 another project. Authenticated Storage download avoids expiring signed URLs in
 persistent badge snapshots. No `service_role`, secret API key or database
@@ -141,7 +144,7 @@ operations after rebuilding the database from migrations.
 | `homehq_checklist` | `kind`, `id`, `title`, `person_id`, `routine`, `stars`, `category`, `store`, `quantity`, `note`, `sort_order` |
 | `homehq_devices` | light/lock/garage state with server-owned `version`; all controls are samples |
 | `homehq_cards` | bounded `data` JSON for `weather`, `home_status`, `agents` |
-| `homehq_photos` | `id`, `path`, `asset`, `caption`, `place`, `sort_order` |
+| `homehq_photos` | `id`, `path`, optional `jpeg_path`, `asset`, `caption`, `place`, `sort_order` |
 
 Checklist `kind` is `chore` or `shopping`; `person_id = NULL` means a chore is for
 anyone. Assigned chores require that person's `done_by`; an any-person chore

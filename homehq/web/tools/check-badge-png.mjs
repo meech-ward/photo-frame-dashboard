@@ -74,7 +74,7 @@ function pixels(parts) {
 }
 
 const browser = await chromium.launch({ headless: true });
-let prepared, converted;
+let prepared, converted, jpeg;
 try {
   const page = await browser.newPage();
   // A blank local document avoids starting Auth or loading any household data.
@@ -87,7 +87,7 @@ try {
   });
   await page.goto(new URL('/__badge_png_gate', webURL).href);
   const result = await page.evaluate(async (inputType) => {
-    const { badgePNG } = await import('/src/backend.ts');
+    const { badgePNG, badgePhotoVariants } = await import('/src/backend.ts');
     const canvas = document.createElement('canvas');
     canvas.width = 320; canvas.height = 240;
     const context = canvas.getContext('2d');
@@ -106,6 +106,7 @@ try {
     context.putImageData(pixels, 0, 0);
     const source = await new Promise((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('Source encoding failed.')), inputType));
     if (source.type !== inputType) throw new Error('The browser did not encode the requested source format.');
+    const { jpeg } = await badgePhotoVariants(new File([source], 'synthetic-variants-test', { type: inputType }));
     let prepared;
     const toBlob = HTMLCanvasElement.prototype.toBlob;
     // Capture the exact intermediate that badgePNG encodes before coalescing;
@@ -116,13 +117,14 @@ try {
     try {
       const converted = await badgePNG(new File([source], `synthetic-codec-test.${inputType.split('/')[1]}`, { type: inputType }));
       if (!prepared) throw new Error('Upload function did not encode its canvas.');
-      return { prepared: Array.from(new Uint8Array(await prepared.arrayBuffer())), converted: Array.from(new Uint8Array(await converted.arrayBuffer())) };
+      return { prepared: Array.from(new Uint8Array(await prepared.arrayBuffer())), converted: Array.from(new Uint8Array(await converted.arrayBuffer())), jpeg: Array.from(new Uint8Array(await jpeg.arrayBuffer())) };
     } finally {
       HTMLCanvasElement.prototype.toBlob = toBlob;
     }
   }, options['--input-type']);
   prepared = Buffer.from(result.prepared);
   converted = Buffer.from(result.converted);
+  jpeg = Buffer.from(result.jpeg);
 } finally {
   await browser.close();
 }
@@ -135,6 +137,14 @@ assert.deepEqual(after.stream, before.stream, 'Coalescing must preserve every co
 assert.deepEqual(inflateSync(after.stream), inflateSync(before.stream), 'Inflated scanlines changed.');
 assert.deepEqual(pixels(after), pixels(before), 'Decoded image pixels changed.');
 assert.deepEqual(after.chunks.filter((chunk) => chunk.type !== 'IDAT'), before.chunks.filter((chunk) => chunk.type !== 'IDAT'), 'Non-image chunks changed.');
+assert.ok(jpeg.length <= 327680, 'The JPEG variant exceeds the badge transfer limit.');
+assert.equal(jpeg.subarray(0, 2).toString('hex'), 'ffd8');
+assert.equal(jpeg.subarray(-2).toString('hex'), 'ffd9');
+const frame = jpeg.indexOf(Buffer.from([0xff, 0xc0]));
+assert.ok(frame > 0, 'The JPEG variant must contain a baseline frame.');
+assert.equal(jpeg[frame + 4], 8);
+assert.equal(jpeg.readUInt16BE(frame + 5), 240);
+assert.equal(jpeg.readUInt16BE(frame + 7), 320);
 
 // The pinned module contains the real native C++ decoder; a JavaScript image
 // decoder accepting both files would miss the specific hardware limitation.
@@ -144,6 +154,8 @@ const output = [];
 const mp = await loadMicroPython({ stdout: (line) => output.push(line), stderr: (line) => output.push(line) });
 mp.FS.writeFile('/browser-multichunk.png', prepared);
 mp.FS.writeFile('/badge-singlechunk.png', converted);
+mp.FS.writeFile('/badge-photo.jpg', jpeg);
+mp.FS.writeFile('/badge-photo.img', jpeg);
 await mp.runPythonAsync(`
 import json
 from picovector import image
@@ -158,8 +170,12 @@ if ${options['--input-type'] === 'image/png' ? 'True' : 'False'}:
     assert before_outcome == 'ValueError', 'Native negative control unexpectedly decoded'
 after = image.load('/badge-singlechunk.png')
 assert after.width == 320 and after.height == 240, 'Native decoded dimensions differ'
-print(json.dumps({'before': before_outcome, 'after': 'decoded', 'width': after.width, 'height': after.height}))
+jpeg = image.load('/badge-photo.jpg')
+assert jpeg.width == 320 and jpeg.height == 240, 'Native JPEG dimensions differ'
+cached = image.load('/badge-photo.img')
+assert cached.width == 320 and cached.height == 240, 'Native cached JPEG dimensions differ'
+print(json.dumps({'before': before_outcome, 'after': 'decoded', 'width': after.width, 'height': after.height, 'jpeg': 'decoded', 'jpeg_width': jpeg.width, 'jpeg_height': jpeg.height, 'jpeg_cache_extension': 'img'}))
 `);
 const native = output.filter((line) => line.startsWith('{')).map((line) => JSON.parse(line));
 assert.equal(native.length, 1, 'The native decoder did not report success.');
-console.log(JSON.stringify({ ...native[0], input_type: options['--input-type'], browser_idat_chunks: before.idats.length, badge_idat_chunks: after.idats.length, browser_bytes: prepared.length, badge_bytes: converted.length, lossless: true, lossless_scope: 'PNG IDAT coalescing', native_runtime_sha256: expectedHash }));
+console.log(JSON.stringify({ ...native[0], input_type: options['--input-type'], browser_idat_chunks: before.idats.length, badge_idat_chunks: after.idats.length, browser_bytes: prepared.length, badge_bytes: converted.length, lossless: true, lossless_scope: 'PNG IDAT coalescing', jpeg_bytes: jpeg.length, jpeg_quality: 0.85, native_runtime_sha256: expectedHash }));

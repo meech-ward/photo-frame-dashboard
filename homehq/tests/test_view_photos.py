@@ -73,6 +73,18 @@ class PhotoViewTests(unittest.TestCase):
         self.assertEqual(screen.blit.call_count, 3)
         self.assertTrue(all(call.args[0] is pixels for call in screen.blit.call_args_list))
 
+    def test_jpeg_identity_invalidates_decoded_pixels_when_png_path_stays_the_same(self):
+        first, second = object(), object()
+        loader = Mock(side_effect=[first, second])
+        view, screen = native_view(loader)
+        app, row = photo_app()
+        row["jpeg_path"] = "household/first.jpg"
+        view.photos(app, "/state/homehq-photo-0.img")
+        row["jpeg_path"] = "household/second.jpg"
+        view.photos(app, "/state/homehq-photo-0.img")
+        self.assertEqual(loader.call_count, 2)
+        self.assertIs(screen.blit.call_args.args[0], second)
+
 
 if __name__ == "__main__":
     unittest.main()
