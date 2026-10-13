@@ -183,6 +183,9 @@ Uploaded photo descriptors now carry a PNG `path` and optional `jpeg_path`.
 Tufty prefers the baseline JPEG; the Chromatic retains the streaming PNG path.
 Use the [photo contract](CONTRACT.md) when adding another device instead of
 assuming a filename extension or copying a device-specific cache implementation.
+The JPEG update is prepared and the hosted variants are verified; neither Tufty
+has that app update installed yet. Reconnect each board for installation and
+live photo/restart acceptance, preserving its login, Wi-Fi and unrelated state.
 
 `Service` accepts an injected transport and configurable `state_root`. Preserve
 snapshot/status/command/poll, desired-value conflicts/retries, account-separated

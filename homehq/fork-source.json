@@ -7,5 +7,6 @@
   "photo_recovery_checkpoint": "3190463cdac0c3a5c539e6638d6a8e7d42a94081",
   "photo_upload_checkpoint": "d34e2682bfa5d507f5d5e0cda0ca4d6635396aa2",
   "photo_input_checkpoint": "028b375d1fadcd6f38cc83dc8063dadbf77f94cf",
-  "jpeg_delivery_checkpoint": "9f96ad4b3ad85fa169dd63113cc154bb9d3eb7ee"
+  "jpeg_delivery_checkpoint": "9f96ad4b3ad85fa169dd63113cc154bb9d3eb7ee",
+  "jpeg_hosted_checkpoint": "529edc5087f46d9fb3e269dedf343acc4a28a866"
 }
