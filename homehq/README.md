@@ -14,26 +14,23 @@ the upstream source, full video transcript review and original social post.
 
 For another agent, start with the [handoff and porting map](HANDOFF.md): current
 source/output directories, customization routes, deployment and the seams for
-another hardware target. The [local operator record](https://github.com/meech-ward/select-badge/blob/main/docs/handoff/homehq-local-2026-10-13.md)
-keeps this machine's paths and per-device installation evidence separate.
+another hardware target. Make changes directly in this public fork.
 The [native ModRetro Chromatic port](chromatic/README.md) adapts these pages to
 the ESP32/LVGL overlay; its installation and physical acceptance status are
 tracked separately from the badges.
 
-## Try the native app locally
+## Explore and build
 
-Follow [playground prerequisites](https://github.com/meech-ward/select-badge/blob/main/playground/README.md), then:
+Start the browser display and household editor with the [public quickstart](../HOMEHQ.md).
+For the native app, follow the [Tufty build and install guide](BUILD.md).
+[badge.select/guides](https://badge.select/guides) is the stable starting point
+for SELECT firmware, setup and source downloads.
 
-```sh
-cd playground
-PLAYGROUND_PROFILE=review PLAYGROUND_APPS=homehq npm run dev
-```
-
-Choose Home HQ in the review playground. It works without an account. The
-sample clock starts at **3:18 PM**, with Skidmark's piano lesson in 27 minutes.
-The three landscape illustrations carry **SAMPLE ART**; they are original artwork,
-not Wes's family photographs. **SAMPLE**, **SAMPLE HOME** and **SAMPLE USAGE** mark
-weather, home readings/controls and agent meters. These providers are not connected.
+An unconfigured badge opens the sample household. Its clock starts at **3:18 PM**,
+with Skidmark's piano lesson in 27 minutes. The landscape illustrations carry
+**SAMPLE ART**; they are original artwork, not Wes's family photographs.
+**SAMPLE**, **SAMPLE HOME** and **SAMPLE USAGE** mark weather, home readings and
+agent meters. These providers are not connected.
 
 The seven pages cycle in this order: **Today → Calendar → Chores → Shopping →
 Photos → Home → Agents**. The footer icons line up with the physical A/B/C buttons: side chevrons change
@@ -106,8 +103,8 @@ flash cleanup/retry and native PNG decode. Its measured minimum free space was
 
 The photo renderer retries failed decodes on the next draw and tracks Storage
 content separately from the two reusable filenames, preventing stale decoded
-pixels after slot replacement. [Recovery checks](https://github.com/meech-ward/select-badge/blob/main/benchmark/results/reports/2026-10-12-homehq-photo-recovery.md)
-separate this tested behavior from the pending owner-board diagnosis.
+pixels after slot replacement. The host tests cover replacement and decode
+retries; the [photo probe](tools/PHOTO-STORAGE-PROBE.md) describes physical checks.
 
 ## Personal Supabase backend
 
@@ -115,12 +112,7 @@ For your own badge, create a fresh **Free Supabase project** in your account and
 follow the [backend deployment steps](backend-README.md#deploy-to-your-own-supabase-project)
 to apply configuration, migrations and the private photo bucket. Connect the
 companion below, create/sign into an ordinary owner account, then provision a
-member logins for the household. Every device signs in separately to get its own session.
-
-The current demonstration uses a new **Home HQ** project in the **Free DevRel**
-organization, independently of BadgeLink. Its exact-target operator workflow is
-documented in [guarded hosted setup](hosted-tooling.md); other badge owners use
-their own project and the ordinary backend guide.
+member login for each person in the household. Every device signs in separately to get its own session.
 
 For optional development on your computer, from the repository root:
 
@@ -227,14 +219,15 @@ attribution. Four physical-board radio/power behavior still needs four boards.
 ## Badge export and provisioning
 
 ```sh
-python3 homehq/tools/build.py --verify-runtime playground/public/runtime/micropython.mjs
+python3 homehq/tools/build.py --toolchain "$HOMEHQ_TOOLCHAIN"
 python3 homehq/tools/export.py
 ```
 
 The [build guide](BUILD.md) covers pinned compiler prerequisites and firmware
 compatibility. Source +compiled app output is under `homehq/build/standalone`.
 The public starter ZIP includes infrastructure, editor, native source, its
-minimal generic dependencies and the verified compiled app. Private local files
+minimal generic dependencies and reproducibly compiled app. The build manifest
+records whether optional runtime verification ran. Private local files
 are excluded through explicit allowlists.
 
 Configure URL/public key and Wi-Fi for on-badge sign-in:
@@ -262,84 +255,52 @@ rows and prepared 320×240 photos stay in your household-scoped Supabase project
 
 ## Verify
 
+From the repository root:
+
 ```sh
 python3 -m unittest discover -s homehq/tests
-cd playground
-npm run typecheck
-PW_PORT=4190 PW_WORKERS=1 npx playwright test e2e/homehq.spec.ts
+python3 homehq/tools/sync_demo.py --check
+node homehq/web/tools/check-upstream.mjs
+npm --prefix homehq/web run typecheck
+npm --prefix homehq/web test
+npm --prefix homehq/web run build
 ```
 
-The browser lane runs canonical Python with the real MicroPython rasterizer.
-Its frame times are not hardware measurements. The device evidence below records
-passing native checks separately from physical-switch, optical readability,
-battery and four-board checks; see the
-[dated evidence record](https://github.com/meech-ward/select-badge/blob/main/benchmark/results/reports/2026-10-11-homehq-local.md).
+These checks need no connected badge or hosted household. The
+[web guide](web/README.md#verification) covers browser tests, and the
+[backend guide](backend-README.md) covers an isolated local Supabase stack.
 
-### Render the native screens without hardware
+### Optional native framebuffer checks
 
-After building the compiled app, the optional renderer uses the same canonical
-MicroPython and picovector as the playground. Pillow assembles the raw frames:
+The renderer requires a separately supplied compatible MicroPython/picovector
+WASM runtime and matching Tufty ROM fonts. Those simulator artifacts are not
+included in this repository or required for the normal build. See
+[build prerequisites](BUILD.md#optional-native-runtime-check).
+
+After building, install Pillow and pass both asset paths explicitly:
 
 ```sh
-node homehq/tools/render_native.mjs homehq/build/standalone/mpy/homehq /private/tmp/homehq-frames
-python3 homehq/tools/check_native_frames.py /private/tmp/homehq-frames
+node homehq/tools/render_native.mjs homehq/build/standalone/mpy/homehq \
+  /tmp/homehq-frames /absolute/path/micropython.mjs /absolute/path/rom/fonts
+python3 homehq/tools/check_native_frames.py /tmp/homehq-frames
 ```
 
-The first command also accepts explicit runtime and ROM-font paths; see the
-[build prerequisites](BUILD.md). It checks 41 page/detail/member/login states, visible
-and empty physical key slots, distinct action glyphs and stable cached geometry.
-It also compares nine countdowns (0–10080 minutes) against unrestricted native
-font pixels, detecting clipped digits, ellipses and collisions with `MIN`.
-Add `--countdown-only` for this focused check without the 41-screen run.
-These are virtual framebuffer checks, with labelled fixture data and no network
-or physical-board claim.
+This checks 41 page/detail/member/login states and nine countdowns (0–10080
+minutes) against unrestricted native font pixels to catch clipping and collisions.
+Add `--countdown-only` for a focused render. Virtual pixels do not establish
+physical button, radio, battery or optical behavior.
 
-## Current development-device evidence
+### Hardware acceptance
 
-The compiled app is installed on the explicitly selected development Tufty,
-with the original flash/system backed up and an extra Home HQ launcher tile.
-All seven physical framebuffer pages, model button flows and owned cache-close
-checks pass; first useful present measured 627 ms after a bytecode inventory
-warmed the filesystem. These captures are framebuffer evidence, not optical
-photographs or physical-switch testing. A new **DevRel Free Home HQ** project
-and ordinary-owner companion are deployed/configured independently of BadgeLink.
+Development Tuftys have been tested for compiled app loading, all seven pages,
+email/password sign-in, saved-session recovery, cross-account Realtime updates,
+and JPEG/PNG rendering and cached-photo recovery. The
+[installed-app](tools/DEVICE-PROBE.md), [Auth](tools/AUTH-DEVICE-PROBE.md) and
+[photo storage](tools/PHOTO-STORAGE-PROBE.md) guides describe the probes and their
+scope. A successful install is not itself an acceptance test.
 
-On the user-selected 2.4 GHz network, actual compiled native HTTPS/private
-Realtime snapshots, Shopping toggle/restore, a 65-second quiet socket and
-Offline → fresh joined recovery pass. Recovery took **15.224 s**; a forced Auth
-rotation was durably saved in **9.692 s**, with **4,286,336 bytes** minimum
-uncollected heap in that recovery run. A private maximum-size PNG also downloaded,
-matched its hash and decoded on the badge. Restart/cache/token and duplicate-photo correctness checks also pass. The
-final compiled icon UI opens in 811 ms after a warm bytecode gate, reaches a
-fresh private snapshot in 8.075 s and retains at least 7,503,488 bytes free heap.
-The app is left running Live after the host serial connection is released.
-Large downloaded photos remain background work; a 320 KiB native comparison
-took 41.054 s, and atomic TLS work can pause an individual update about 0.5 s.
-Battery life, cold power-on timing, physical-switch testing and glass readability
-are unmeasured. [Reproducible installed-app probe](tools/DEVICE-PROBE.md)
-and [dated evidence](https://github.com/meech-ward/select-badge/blob/main/benchmark/results/reports/2026-10-11-homehq-local.md)
-keep those limits separate from the passing hosted CPython protocol tests.
-These earlier timing measurements remain dated evidence. The current virtual
-renderer covers 41 states plus nine countdown glyph controls; four distinct
-hosted member accounts pass fanout and disconnected catch-up. Two physical
-Tuftys have verified installs, with full Auth/recovery/cross-account Realtime
-acceptance recorded on the first and the latest countdown native render on the
-second. See [current device state](https://github.com/meech-ward/select-badge/blob/main/docs/handoff/homehq-local-2026-10-13.md#current-implementation-and-deployment)
-before selecting a device or deciding which update it needs.
-
-### Current member login acceptance
-
-The 20-module member build was tested on the first development Tufty, signed
-in as Claudia while the editor was signed in as Wes. Native login, local logout,
-refresh-only token rotation and fresh-interpreter recovery pass. An owner edit
-reached Claudia's badge through an actual private Realtime hint in4.597s; native
-Shopping undo/completion passed and SQL attributed completion to Claudia. Only
-a disposable task was used and removed. That run left the badge interactiveLive;
-the handoff records later device state.
-
-Four distinct hosted Auth accounts also pass fanout/reconnect. This detailed
-Auth acceptance used one physical Tufty; the second has separate install/live/UI
-evidence. Native login took9.054s and fresh-interpreter recovery
-13.699s in these runs. Atomic TLS work can pause a frame around0.8s. See the
-[Auth acceptance probe](tools/AUTH-DEVICE-PROBE.md) and dated evidence for limits.
-The production six-tile release and all other system files remain unchanged.
+Four distinct Auth clients have passed household fanout and reconnect checks
+using the native transport on a computer; this does not establish four physical
+badges' simultaneous radio behavior. Battery endurance, abrupt physical power
+loss, extended soak and complete physical-switch coverage remain unmeasured.
+Firmware compatibility is limited to the tuple documented in [BUILD.md](BUILD.md).

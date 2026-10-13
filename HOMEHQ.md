@@ -61,8 +61,9 @@ PNG variant. Uploads also create the metadata row the slideshow needs.
 The fork includes the Tufty app's minimal generic source, font and certificate
 dependencies in [`homehq/vendor/tufty/`](homehq/vendor/tufty/README.md).
 Build it from this repository with the pinned MicroPython compiler; the complete
-SELECT conference repository is not a build dependency. Compatible Badgeware
-firmware is still required. Configure the project's URL/public key and Wi-Fi,
+SELECT conference repository is not a build dependency. Start at
+[badge.select/guides](https://badge.select/guides) for compatible firmware, setup
+and current source downloads. Configure the project's URL/public key and Wi-Fi,
 then sign in on the badge.
 
 Chromatic builds use a separate checkout of the pinned public ModRetro MCU

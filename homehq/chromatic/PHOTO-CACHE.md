@@ -1,8 +1,9 @@
 # Native two-photo cache
 
-Status: implementation, host checks and the recorded private-photo/offline-cache/
-restart/logout physical acceptance pass. See the [dated hardware evidence](https://github.com/meech-ward/select-badge/blob/main/benchmark/results/reports/2026-10-12-homehq-chromatic.md#final-physical-acceptance-and-cleanup) for scope and limits.
-Host tests never open a device or write physical flash.
+The cache has host checks and a development hardware acceptance run covering
+private photos, offline restoration, restart and logout. The [platform guide](README.md)
+states the tested baseline and remaining limits. Host tests never open a device
+or write physical flash.
 
 ## Runtime data boundary
 
@@ -28,15 +29,11 @@ USB firmware deployment still writes only the application at `0x10000`.
 Each helper stays within its own fixed range. Neither alters/registers partitions
 or uses a filesystem. Both keep the SDK dangerous-write guard enabled.
 
-The original 4 MiB before-Home-HQ backup
-`build/homehq-chromatic-20261012/backups/homehq-20261012T223831Z/before-homehq.bin`
-has SHA-256 `d7e199f45a18aace43b68d97dc217f0d26eb1ccd711e36cd9c579b26653538a8`.
-Its partition table declares only NVS `0x9000/0x6000`, PHY `0xf000/0x1000`,
-and factory `0x10000/0x100000`. All 3,080,192 bytes after `0x110000` are `0xff`;
-tail SHA-256 is `80285f1d0a442aa464b5f9083ff347cdfb3991384a41086ad49836b995be4d3d`.
-The inspection emitted only counts, layout and hashes. An independent read of
-that backup confirmed all 331,776 staging bytes erased, SHA-256
-`021c7b2cb69bcae6af3d6f8e997d3fc77dc2241d46b94563e859257ef499e72c`.
+The expected 4 MiB flash layout declares only NVS `0x9000/0x6000`, PHY
+`0xf000/0x1000`, and factory `0x10000/0x100000`. Before first installation,
+retain a full backup and verify the proposed cache/staging range is unused.
+The development device's range was blank before Home HQ; a different device's
+contents must be checked independently.
 
 Each cache operation refuses unexpected flash size, enabled flash encryption,
 any partition-layout change or overlap. Before first ownership is recorded,

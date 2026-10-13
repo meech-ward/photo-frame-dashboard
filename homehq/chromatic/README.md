@@ -5,19 +5,18 @@ ordinary Auth accounts and companion editor as the badges. It adapts the seven
 pages to the Chromatic's 160×144 RGB565 overlay. It is an MCU application, built
 on the ModRetro MCU firmware, not a Game Boy cartridge ROM.
 
-Current validation: the final 1,039,216-byte application is installed on the
-physical Chromatic, connected to the configured Wi-Fi and signed in to the live
-household at revision 253. Seven USB-rendered pages, owner-confirmed physical
-Start/Right/A, live writes/reconnect/reboot recovery, private Realtime, full
-320 KiB private photo rendering, replacement, offline two-frame restoration,
-cache restart and sign-out clearing are recorded. The final maximum-size photo
-completed by the 25.3-second poll; canceling a transfer preserved navigation with
-zero blocked inputs. Final reconnect minimum heap was 16,500 bytes. All six
-CTests and 50 Python tests pass with the actual hosted fixture, plus photo
-ASan/UBSan in both byte orders; the post-rebase build matches the installed SHA.
-Temporary server photos were removed and original paths restored. Battery
+Development hardware has passed seven-page rendering, physical Start/Right/A,
+login, live writes, Realtime reconnect, saved-session recovery, private photo
+rendering and offline two-photo restoration. A maximum-size PNG completed by a
+25.3-second poll; cancelling its transfer preserved navigation. The measured
+minimum reconnect heap was 16,500 bytes. These results describe a bounded
+acceptance run, not general timing or endurance guarantees.
+
+The public MCU baseline below has separate build and host-test acceptance;
+that exact rebuilt image has not yet been installed on hardware. Battery
 endurance, abrupt physical power loss, extended soak and a complete physical
-keyboard sweep remain unmeasured. See the [evidence record](https://github.com/meech-ward/select-badge/blob/main/benchmark/results/reports/2026-10-12-homehq-chromatic.md).
+keyboard sweep remain unmeasured. Reproduce the host checks and perform the
+installation checklist for your device.
 
 ## Controls
 
@@ -50,8 +49,7 @@ its replacement. A failed decode retains the last useful view, blocks stale
 actions and retries hydration.
 
 The display uses a 16-row RGB565 DMA stripe: 5,120 bytes instead of a 46,080-byte
-full framebuffer, saving 40,960 bytes of RAM. The authenticated revision-238 cold
-boot measured 94,868 bytes free, a 90,112-byte largest block and a 92,572-byte
+full framebuffer, saving 40,960 bytes of RAM. A development cold boot measured 94,868 bytes free, a 90,112-byte largest block and a 92,572-byte
 minimum free heap, with hydration ready and zero blocked inputs. These are cold
 boot measurements; sustained private-photo/network peaks are recorded separately
 in the final acceptance above.
@@ -141,14 +139,12 @@ Use a fresh checkout of the public
 `6c94613da72420f6a364e0024681401bd69184ba`. `prepare.py` verifies its required
 files and applies the checked-in [platform patch](tools/mcu-baseline.patch)
 before copying the Home HQ overlay. The patch supplies the display/startup and
-button/FPGA seams previously inherited from the local SAM13 tree; it contains
+button/FPGA integration; it contains
 no camera/bloom application or private inputs. Its exact source and checksums
 are in [mcu-baseline.json](tools/mcu-baseline.json), with the upstream
 [GPL-3.0 license](tools/mcu-baseline-LICENSE).
 
-The earlier physical acceptance used local SAM13 commit `b05819b`; that custom
-commit is not required for this public build. The fresh public-source build also
-passes: 1,039,216 bytes, with 9,360 bytes free in the factory app partition. Its
+The fresh public-source build passes: 1,039,216 bytes, with 9,360 bytes free in the factory app partition. Its
 SHA-256 is `1ce73fd7c0d33f286b7877a7fdfccbed3416edcb62b88b62f7fc8f506733e7df`.
 That image has build/host acceptance; the physical results above belong to the
 previously installed image. Keep the dependency checkout
@@ -221,8 +217,8 @@ power-loss durability.
 ## Application-only installation and private setup
 
 Power the Chromatic on normally with its cartridge inserted. Identify the actual
-ModRetro USB MCU port. When using the documented Deck, keep it awake and online
-through Tailscale. Keep one process in charge of serial access.
+ModRetro USB MCU port on your programming computer. Keep one process in charge
+of serial access.
 
 Transfer the exact size-checked binary and compare SHA-256 on the programming
 host. `tools/deploy.py` verifies its version/digest, makes a fresh full MCU backup,

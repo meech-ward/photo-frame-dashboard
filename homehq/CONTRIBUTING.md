@@ -7,13 +7,13 @@ frontend reuses 29 pinned original files, verified by
 `node homehq/web/tools/check-upstream.mjs`; the Supabase integration and native
 device ports are additive code under `homehq/`.
 
-The maintained SELECT-side source is
-[meech-ward/select-badge/homehq](https://github.com/meech-ward/select-badge/tree/main/homehq).
-[fork-source.json](https://github.com/meech-ward/photo-frame-dashboard/blob/main/homehq/fork-source.json) records the source checkpoints mirrored into
-this fork. The small Tufty dependency allowlist has its own
-[provenance](https://github.com/meech-ward/photo-frame-dashboard/blob/main/homehq/vendor/tufty/provenance.json), and the Chromatic build pins public MCU
-source plus a reviewed platform patch. Preserve these records when updating a
-copy, rather than importing whole device repositories or build output.
+Develop and submit Home HQ changes in this public fork.
+[fork-source.json](fork-source.json) records the original dashboard and device
+dependencies. The small Tufty dependency allowlist has its own
+[provenance](vendor/tufty/provenance.json), and the Chromatic build pins public MCU
+source plus a reviewed platform patch. Preserve these records and license
+notices when updating a dependency. [badge.select/guides](https://badge.select/guides)
+is the stable entry point for SELECT setup and source downloads.
 
 ## An upstream contribution
 
@@ -37,7 +37,7 @@ No PR or social post is created by the build tools.
 
 ## Changing this integration
 
-Start with [HOMEHQ.md](https://github.com/meech-ward/photo-frame-dashboard/blob/main/HOMEHQ.md) and [the source/porting map](HANDOFF.md).
+Start with [HOMEHQ.md](../HOMEHQ.md) and [the source/porting map](HANDOFF.md).
 Use the checks for the changed surface. A web or shared fixture change runs the
 quick checks in HOMEHQ.md; database changes follow the declarative migration
 workflow in [the backend guide](backend-README.md#declarative-changes).

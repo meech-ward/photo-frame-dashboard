@@ -92,8 +92,7 @@ same change in both the schema and a guessed migration filename.
 ## Deploy to your own Supabase project
 
 Create a fresh project in your account, then work from this directory. Confirm
-the CLI's resolved target before pushing: the existing BadgeLink project is not
-a Home HQ target.
+the CLI's resolved target before pushing; use a project dedicated to Home HQ.
 
 ```sh
 supabase login
@@ -230,7 +229,9 @@ reset on 2026-10-12, including the inherited authenticated-grant correction.
 Physical response time,
 heap use, refresh recovery and photo decode remain hardware checks.
 
-For this task’s verified new Free DevRel demo, [guarded hosted tooling](hosted-tooling.md) keeps the exact project reference explicit, reviews config/migration fingerprints, creates a normal owner with a separate badge session, and probes actual hosted delivery without client admin keys. Other personal accounts can use the ordinary CLI workflow above.
+Use the ordinary CLI deployment workflow above for your hosted project. The
+[member check](tools/MEMBER-CHECK.md) tests household access and Realtime locally
+before deploying changes.
 
 ## Member accounts and on-badge Auth
 

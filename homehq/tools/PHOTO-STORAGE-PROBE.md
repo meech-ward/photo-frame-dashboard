@@ -1,11 +1,10 @@
 # Offline physical photo storage probe
 
 `photo_storage_probe.py` is a USB-fed acceptance probe for the installed Home HQ
-bytecode on Tufty UID **6d9430717fc47ddf**, ABI **7942**. It explicitly refuses the
-Pico UID **e7e7d70437b93611** and every other device. The authoring lane performs
-no USB operations; the hardware lane selects the exact connected Tufty and runs
-the source through `mpremote` from a fresh raw REPL after installing the latest
-two-slot eviction bytecode.
+bytecode on a Tufty2350 with ABI **7942**. Set `HOMEHQ_PROBE_TARGET` to the
+selected device's UID before executing the source. The probe refuses a missing
+or mismatched target and other board models. Select the exact connected Tufty
+and run through `mpremote` from a fresh raw REPL after verifying its installation.
 
 The probe uses the actual installed `SupabaseTransport.download_photo`, `contain`
 and `photo` methods on a no-network object. `FakeHTTP` supplies an in-RAM, exactly
@@ -49,11 +48,12 @@ cleanup and PNG decode/draw; it makes **no HTTPS, Wi-Fi, Auth or Realtime claim*
 After an interrupted USB session, inspect only the probe's owned paths before
 rerunning; the initial refusal prevents accidental cleanup of unknown files.
 
-The hardware lane may execute from its own explicit, previously verified serial
-selector, for example:
+After setting `TUFTY_PORT` and `TUFTY_UID` to the selected device, run from the
+repository root:
 
 ```sh
-mpremote connect id:6d9430717fc47ddf run /absolute/host/path/photo_storage_probe.py
+mpremote connect "$TUFTY_PORT" exec "HOMEHQ_PROBE_TARGET='$TUFTY_UID'" \
+  run homehq/tools/photo_storage_probe.py
 ```
 
 `run` reads the host file and executes its source in RAM. Do **not** copy a padded
@@ -62,11 +62,10 @@ PNG fixture to `/state`; use the embedded small PNG and in-RAM construction.
 Offline fixture, guard and real-host-filesystem tests can run without USB:
 
 ```sh
-HOMEHQ_PROBE_TRANSPORT=/absolute/path/homehq/badge/homehq/transport.py \
-  python3 -B tools/test_photo_storage_probe.py
+python3 -B homehq/tools/test_photo_storage_probe.py
 ```
 
 Those tests validate all PNG CRCs and decompressed pixels, preservation/refusal
 guards, three replacements, partial cleanup and retry. A negative control proves
 the monitor rejects the previous design that holds two slots plus a temporary
-third file. Only the hardware lane can report a physical pass.
+third file. Only running the probe on the selected device can establish a physical pass.

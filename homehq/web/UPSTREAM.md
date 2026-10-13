@@ -10,14 +10,12 @@ photo-frame setup, kiosk code, device research and deployment configuration;
 those are outside this browser frontend slice. This integration does not run
 the Android flashing or kiosk tools.
 
-The owner's full fork is
+The Home HQ fork is
 [meech-ward/photo-frame-dashboard](https://github.com/meech-ward/photo-frame-dashboard).
-Its original `dashboard/` remains untouched. The added `homehq/` directory is an
-extension snapshot published only after the integration passes its checks.
-Canonical development remains in
-[meech-ward/select-badge, `homehq/`](https://github.com/meech-ward/select-badge/tree/main/homehq):
-make changes there first, verify them, then refresh the additive fork snapshot.
-Do not maintain divergent implementations in both repositories.
+Its original `dashboard/` remains untouched. Develop the Supabase integration,
+editor and native ports directly in this fork's `homehq/` directory. The
+[contribution guide](../CONTRIBUTING.md) describes focused checks and upstream
+contributions.
 
 `upstream/index.html` records the original shell. The app's entry HTML can add
 connection/account controls and the companion editor without rewriting that

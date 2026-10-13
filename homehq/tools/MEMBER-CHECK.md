@@ -34,7 +34,7 @@ The local run on 2026-10-12 passed all 23 assertions, 121 SQL tests and the prio
 all four authoritative snapshots in 79.2–96.3 ms, and offline catchup took 144.9 ms.
 These are one local host run, not cloud or MicroPython latency guarantees.
 
-For the guarded hosted project and existing private member credentials, use the
+For an explicitly configured hosted project and existing member credentials, use the
 [`check_family.py --member-files` procedure](FAMILY-CHECK.md). Four protocol clients
 prove real Auth/Realtime/Storage behavior, not four physical badges' radios,
 screen appearance, flash durability or button handling.

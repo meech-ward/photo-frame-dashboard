@@ -1,9 +1,10 @@
 # Build the standalone badge app
 
-From the repository root:
+After preparing the compiler in [Prerequisites](#prerequisites-and-compatibility),
+run from the repository root:
 
 ```sh
-python3 homehq/tools/build.py
+python3 homehq/tools/build.py --toolchain "$HOMEHQ_TOOLCHAIN"
 ```
 
 The builder exports `homehq/build/standalone/source/homehq/` and a bytecode-only
@@ -13,10 +14,10 @@ It copies app/UI source, the generic `realtime` and `aiohttp` packages, the coop
 verified TLS support, public GTS
 certificate roots, original sample artwork and the Mona Sans outline with its
 OFL notice. The app adds its own root to `sys.path`; no conference networking
-installation or fleet token is required. In the SELECT source repository these
-dependencies come from their original shared paths; this public fork uses the
-unchanged, allowlisted copies in `homehq/vendor/tufty/`. Their hashes and source
-revision are recorded there. Neither a sibling SELECT checkout nor an installed
+installation or fleet token is required. This public fork uses the unchanged,
+allowlisted copies in `homehq/vendor/tufty/`, with public source paths and hashes
+recorded in [dependency provenance](vendor/tufty/provenance.json). Neither a
+sibling SELECT checkout nor an installed
 Python networking package is required to build or run the host tests.
 
 The export uses an explicit file allowlist. Badge config, Auth sessions, cached
@@ -25,9 +26,8 @@ household data, Wi-Fi passwords and other files under `/state` are excluded.
 
 ## Prerequisites and compatibility
 
-Use the repository's existing pinned MicroPython toolchain at
-`~/.cache/badge-playground/micropython/mpy-cross/build/mpy-cross`, or pass
-`--toolchain /path/to/badge-playground`. It must come from Pimoroni MicroPython
+Build the pinned compiler below and pass its parent directory with
+`--toolchain "$HOMEHQ_TOOLCHAIN"`. It must come from Pimoroni MicroPython
 commit `b29530abbd0550c8ab6963024aef36f3cd6cd278`, the `bw-1.28.0-3` pin used
 with Badgeware v3.0.2. The builder checks that source commit and the emitted
 format against `py/persistentcode.h`; it emits pure bytecode with 31-bit small
@@ -54,19 +54,23 @@ The firmware must provide Badgeware, picovector, asyncio, TLS and the native
 fonts API. Firmware using a different `.mpy` format needs matching bytecode;
 a successful source build does not establish arbitrary firmware compatibility.
 
-For real bytecode imports and an offline Today frame in the pinned native
-MicroPython WASM runtime:
+### Optional native runtime check
+
+A compatible MicroPython/picovector WASM runtime can also verify real bytecode
+imports and an offline Today frame:
 
 ```sh
-python3 homehq/tools/build.py \
-  --verify-runtime playground/public/runtime/micropython.mjs
+python3 homehq/tools/build.py --toolchain "$HOMEHQ_TOOLCHAIN" \
+  --verify-runtime /absolute/path/micropython.mjs
 ```
 
-This optional graphics check needs the SELECT
-[playground runtime/toolchain](https://github.com/meech-ward/select-badge/tree/main/playground),
-including matching `provenance.json` and byte-exact ROM fonts in the pinned Tufty
-source. Pass the runtime's absolute path when it lives outside this checkout.
-A standalone compiler build above does not require those simulator assets.
+This advanced check requires separately supplied simulator artifacts: the runtime's
+matching `provenance.json` and byte-exact ROM fonts under
+`$HOMEHQ_TOOLCHAIN/tufty2350/romfs/fonts/`. They are not included here and are not
+needed for the normal compiler build or host tests. Start with
+[badge.select/guides](https://badge.select/guides) for current supported SELECT
+tooling; this project does not provide a public simulator distribution.
+
 This check imports the bundled dependencies and
 the compiled app entry, requires the local outline font, and decodes/displays a
 deterministic opaque RGBA PNG above 256 KiB and below the 320 KiB photo limit.
@@ -88,8 +92,8 @@ not make other firmware versions interchangeable. See the
 
 ## Installing later
 
-Use [the repository deployment procedure](https://github.com/meech-ward/select-badge/blob/main/docs/deploy.md) when an owner
-authorizes a development badge installation. The compiled directory installs
+Set up compatible SELECT firmware using [badge.select/guides](https://badge.select/guides),
+then follow the app-only steps below. The compiled directory installs
 at `/system/apps/homehq`. Replace that app's previous files: a `.py` beside a
 matching `.mpy` wins silently in MicroPython. Keep the manifest for comparison.
 The app-local font is a fallback for badges without the system Mona Sans face.
@@ -184,9 +188,8 @@ also discard actions for rows which no longer exist.
 This builder changes no production roster, release version, existing app,
 firmware or badge. Home HQ remains a deliberate development installation.
 
-The current member-login development payload has20 modules and30 files. Its
-compiled Auth/password/refresh/RPC/form APIs execute in the pinned runtime gate;
-all installed bytes matched, with unrelated system hashes unchanged. On the
-selected Tufty the [Auth acceptance](tools/AUTH-DEVICE-PROBE.md) also passes
-actual login, renewal persistence, interpreter recovery and cross-account
-Realtime/member completion. The earlier fifteen-module evidence remains history.
+The current payload contains 20 compiled modules and 30 installed files.
+Compare the installed files with the generated manifest before testing. The
+[Auth acceptance guide](tools/AUTH-DEVICE-PROBE.md) covers login, refresh-token
+persistence, interpreter recovery and cross-account updates. Keep build, install
+and physical behavior results distinct when reporting a deployment.

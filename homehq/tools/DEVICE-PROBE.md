@@ -1,15 +1,16 @@
 # Installed Home HQ acceptance probe
 
-## JPEG photos on either explicitly selected demo Tufty
+## JPEG photos on an explicitly selected Tufty
 
 `jpeg_device_probe.py` checks the installed compiled app with existing household
-photos. It accepts the two known Tufty UIDs only, requires `_mpy=7942`, and never
-installs files, switches accounts or writes cloud data. The host first verifies
-the installed app hashes and supplies the actual USB identity:
+photos. It requires an explicit matching device UID, a Tufty2350 runtime with
+`_mpy=7942`, and never installs files, switches accounts or writes cloud data.
+First verify the installed app hashes and select the actual USB identity. Set
+`TUFTY_PORT` and `TUFTY_UID` from your connected device, then run:
 
 ```sh
-mpremote connect id:03bfbc20532aa948 \
-  exec 'HOMEHQ_JPEG_PROBE_OPTIONS={"uid":"03bfbc20532aa948","timeout_ms":45000}' \
+mpremote connect "$TUFTY_PORT" \
+  exec "HOMEHQ_PROBE_TARGET='$TUFTY_UID'; HOMEHQ_JPEG_PROBE_OPTIONS={'uid':'$TUFTY_UID','timeout_ms':45000}" \
   run homehq/tools/jpeg_device_probe.py
 ```
 
@@ -21,9 +22,9 @@ same local file without another HTTP request. Output contains measurements and
 booleans, never photo paths, captions or credentials. Hardware switches and
 optical appearance are not checked.
 
-After a host-requested hard reset and USB re-enumeration, use options
-`{"uid":"03bfbc20532aa948","require_cached":true,"offline_cache":true}`.
-This suppresses network polling during the bounded check, so a successful HTTP
+After a host-requested hard reset and USB re-enumeration, set
+`require_cached=True` and `offline_cache=True` in the options, retaining your
+explicit target and matching `uid`. This suppresses network polling during the bounded check, so a successful HTTP
 retry cannot hide a missing persisted JPEG. Both photos must render from their
 saved files with zero downloads. Restore the normal interactive app afterward;
 these probes return to REPL and do not leave its event loop running.
@@ -31,16 +32,17 @@ these probes return to REPL and do not leave its event loop running.
 ## General page and networking probe
 
 `device_probe.py` opens **installed compiled** `/system/apps/homehq` through
-`badgeware.launch`. It accepts only Tufty UID `6d9430717fc47ddf` and runtime
-`_mpy=7942`; it refuses Pico `E7E7D70437B93611`, source shadows and an incomplete
+`badgeware.launch`. It requires a caller-supplied `HOMEHQ_PROBE_TARGET` matching
+the detected UID and a Tufty2350 runtime with `_mpy=7942`. It refuses missing or
+mismatched targets, other board models, source shadows and an incomplete
 20-module export (including native Auth and keyboard). It never discovers a USB device, installs files or prints
 credentials, household content or raw transport errors. Use the explicitly
 selected Tufty port after backup and installation have been verified.
 
-From the repository root, with `TUFTY_PORT` set to that known serial port:
+From the repository root, with `TUFTY_PORT` and `TUFTY_UID` set to that device:
 
 ```sh
-mpremote connect "$TUFTY_PORT" run homehq/tools/device_probe.py
+mpremote connect "$TUFTY_PORT" exec "HOMEHQ_PROBE_TARGET='$TUFTY_UID'" run homehq/tools/device_probe.py
 ```
 
 The default run prevents network polling. It measures the first useful Today
@@ -65,7 +67,7 @@ frames forces drawing; an idle dashboard normally retains its last frame.
 Capture one page to the owned 307,200-byte `/state/homehq-probe.rgba` file:
 
 ```sh
-mpremote connect "$TUFTY_PORT" exec "HOMEHQ_PROBE_OPTIONS={'capture':'file','page':'photos'}" run homehq/tools/device_probe.py
+mpremote connect "$TUFTY_PORT" exec "HOMEHQ_PROBE_TARGET='$TUFTY_UID'; HOMEHQ_PROBE_OPTIONS={'capture':'file','page':'photos'}" run homehq/tools/device_probe.py
 mpremote connect "$TUFTY_PORT" fs cp :/state/homehq-probe.rgba /private/tmp/homehq-photos.rgba
 mpremote connect "$TUFTY_PORT" fs rm :/state/homehq-probe.rgba
 ```
@@ -92,10 +94,10 @@ contain household data and must be reviewed before sharing.
 
 ## Configured Supabase acceptance
 
-After the parent lane verifies Wi-Fi, RTC, project provisioning and session:
+After verifying Wi-Fi, RTC, project provisioning and the device session:
 
 ```sh
-mpremote connect "$TUFTY_PORT" exec "HOMEHQ_PROBE_OPTIONS={'online':True,'timeout_ms':30000}" run homehq/tools/device_probe.py
+mpremote connect "$TUFTY_PORT" exec "HOMEHQ_PROBE_TARGET='$TUFTY_UID'; HOMEHQ_PROBE_OPTIONS={'online':True,'timeout_ms':30000}" run homehq/tools/device_probe.py
 ```
 
 This requires a Realtime joined state plus a freshly requested authoritative

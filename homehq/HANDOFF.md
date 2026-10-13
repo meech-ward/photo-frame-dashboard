@@ -1,6 +1,6 @@
 # Home HQ source and porting map
 
-Start with the [public quickstart](https://github.com/meech-ward/photo-frame-dashboard/blob/main/HOMEHQ.md).
+Start with the [public quickstart](../HOMEHQ.md).
 This fork preserves Wes Bos's original photo-frame project and keeps its
 Supabase integration and native device ports under `homehq/`. A fresh clone is
 sufficient for the web/backend source and Tufty application build; Chromatic
@@ -18,7 +18,7 @@ uses a separate pinned public MCU checkout and ESP-IDF workspace.
 | Authored sample data and projections | `homehq/fixtures/demo.json`, `tools/sync_demo.py` |
 | Tufty native layout and interaction | `homehq/badge/homehq/view.py`, `model.py`, `login.py` |
 | Tufty sync, persistence and cooperative networking | `service.py`, `cache.py`, `transport.py`, `auth_client.py` in that app |
-| Tufty's minimal generic dependencies | `homehq/vendor/tufty/` in this fork; [provenance](https://github.com/meech-ward/photo-frame-dashboard/blob/main/homehq/vendor/tufty/provenance.json) |
+| Tufty's minimal generic dependencies | `homehq/vendor/tufty/` in this fork; [provenance](vendor/tufty/provenance.json) |
 | Native Chromatic app and platform patch | `homehq/chromatic/src/`, `tools/prepare.py`, [Chromatic guide](chromatic/README.md) |
 | Source build, export and private provisioning | [BUILD.md](BUILD.md), `homehq/tools/build.py`, `export.py`, `configure.py` |
 | Focused checks | `homehq/tests/`, `supabase/tests/`, `web/tests/`, `chromatic/tests/`, `tools/` |
@@ -30,13 +30,11 @@ and handles its supported writes. The editor provides accounts, metadata edits
 and uploads. Native layouts are separate MicroPython/picovector and C/LVGL
 implementations adapted to each display and its buttons.
 
-The maintained SELECT-side source is
-[meech-ward/select-badge/homehq](https://github.com/meech-ward/select-badge/tree/main/homehq).
-This public fork records mirrored source revisions in `homehq/fork-source.json`.
-The generic Tufty dependency copies are byte-identical to their recorded source
-revision. In SELECT, the builder prefers their canonical shared paths; in this
-fork, it uses the small vendored dependency set. Do not import the conference's
-fleet apps, admin backend or credentials into Home HQ.
+Make Home HQ changes in this repository. Its [source record](fork-source.json)
+identifies the original dashboard and device dependencies. For SELECT firmware,
+setup and current source links, start at [badge.select/guides](https://badge.select/guides).
+The small Tufty dependency set is included with recorded provenance so this app
+can build independently. The conference's fleet apps and backend are not needed.
 
 ## Generated output and private state
 
@@ -63,8 +61,8 @@ For your own project, follow the
 [web setup](web/README.md), [Tufty install](BUILD.md#app-only-install) or
 [Chromatic build/install](chromatic/README.md). Each device uses the same household
 backend and its own login. The owner creates/links member logins in the editor.
-The exact-target hosted operator helper is for the original demo operator;
-it is not the deployment path for someone else's project.
+The optional [hosted development checks](hosted-tooling.md) are separate from
+the ordinary deployment path above.
 
 Change Tufty appearance in `view.py`, interaction in `model.py`, and sign-in in
 `login.py`. Keep networking out of drawing/input. Change browser integration in
@@ -98,8 +96,8 @@ meters are visibly labelled samples. Bundled illustrations are sample art,
 not photographs of Wes's family. No real appliance/provider integration is
 included.
 
-Tufty and Chromatic have recorded native live/reconnect/photo acceptance; their
-platform guides link the dated evidence and remaining measurements. A successful
+Tufty and Chromatic have been tested for native login, live updates, reconnect
+and photo rendering; their platform guides describe the checks and limits. A successful
 build or install is not evidence of battery endurance, abrupt power-loss safety,
 all-device radio behavior or another firmware/hardware combination. Home HQ is
 an additional development app and does not change the stable SELECT badge roster.

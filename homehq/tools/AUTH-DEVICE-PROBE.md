@@ -1,10 +1,11 @@
 # Installed native email/password Auth acceptance
 
 `auth_device_probe.py` is a bounded acceptance script for installed compiled
-Home HQ. Only the root serial controller runs it, after verifying the app's
-manifest and privately backing up the existing Home HQ state. It gates exact
-Tufty UID `6d9430717fc47ddf`, excludes Pico `e7e7d70437b93611`, requires firmware
-`_mpy=7942`, refuses source shadows and requires the complete 20-module bytecode
+Home HQ. Run it through one serial controller after verifying the app's
+manifest and backing up the existing Home HQ state. Set `HOMEHQ_PROBE_TARGET`
+to the selected device's UID in the same interpreter before executing the probe.
+It refuses missing or mismatched targets and other board models, requires a
+Tufty2350 runtime with `_mpy=7942`, refuses source shadows and requires the complete 20-module bytecode
 payload. It launches the actual entry through `badgeware.launch`, feeds the
 existing 16-second watchdog and suppresses physical input during the probe.
 It does not discover USB, deploy files, change radio settings or print secrets.
@@ -39,10 +40,10 @@ Then run a **second fresh REPL** with `mode='restore'` and the same expected
 identity/home/person values, without credentials. This separately proves the
 saved renewal session recovers the member and household after app/interpreter
 restart. It is not a cold power-on or radio-recovery benchmark. Each run closes
-and checkpoints the owned app state; the root controller resumes normal Home HQ
+and checkpoints the owned app state; the host controller resumes normal Home HQ
 interaction separately afterward.
 
-For one focused cross-account proof, the root controller may create an unchecked
+For one focused cross-account proof, the host controller may create an unchecked
 shopping fixture as this demonstration's owner (`created_by` equals its existing
 household/owner UUID) and pass `sync_item_id` in restore mode. Wait for the safe
 `peer_sync_ready` phase before the owner checks that fixture through the normal
