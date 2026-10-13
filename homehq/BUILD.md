@@ -9,12 +9,15 @@ python3 homehq/tools/build.py
 The builder exports `homehq/build/standalone/source/homehq/` and a bytecode-only
 `homehq/build/standalone/mpy/homehq/`. Private provisioning files use a separate
 `homehq/build/private/` directory, so rebuilding cannot overwrite an Auth session.
-It copies canonical app/UI source, the repository's
-generic `realtime` and `aiohttp` packages, its cooperative reconnect policy,
+It copies app/UI source, the generic `realtime` and `aiohttp` packages, the cooperative reconnect policy,
 verified TLS support, public GTS
 certificate roots, original sample artwork and the Mona Sans outline with its
 OFL notice. The app adds its own root to `sys.path`; no conference networking
-installation or fleet token is required.
+installation or fleet token is required. In the SELECT source repository these
+dependencies come from their original shared paths; this public fork uses the
+unchanged, allowlisted copies in `homehq/vendor/tufty/`. Their hashes and source
+revision are recorded there. Neither a sibling SELECT checkout nor an installed
+Python networking package is required to build or run the host tests.
 
 The export uses an explicit file allowlist. Badge config, Auth sessions, cached
 household data, Wi-Fi passwords and other files under `/state` are excluded.
@@ -32,8 +35,21 @@ integers. Each module is compiled twice with a stable embedded filename and
 must be byte-identical. `manifest.json` records the toolchain and every export
 hash.
 
-No compiler, firmware or runtime is installed or built by this command. Follow
-the repository's existing toolchain setup if the pinned compiler is missing.
+For a first build on a computer with Python 3.9+, Git, Make and a C compiler,
+choose a separate toolchain directory and build the pinned compiler:
+
+```sh
+export HOMEHQ_TOOLCHAIN=/absolute/path/to/homehq-toolchain
+mkdir -p "$HOMEHQ_TOOLCHAIN"
+git clone https://github.com/pimoroni/micropython.git \
+  "$HOMEHQ_TOOLCHAIN/micropython"
+git -C "$HOMEHQ_TOOLCHAIN/micropython" checkout --detach \
+  b29530abbd0550c8ab6963024aef36f3cd6cd278
+make -C "$HOMEHQ_TOOLCHAIN/micropython/mpy-cross"
+python3 homehq/tools/build.py --toolchain "$HOMEHQ_TOOLCHAIN"
+```
+
+The builder itself installs no compiler, firmware or runtime.
 The firmware must provide Badgeware, picovector, asyncio, TLS and the native
 fonts API. Firmware using a different `.mpy` format needs matching bytecode;
 a successful source build does not establish arbitrary firmware compatibility.
@@ -46,8 +62,12 @@ python3 homehq/tools/build.py \
   --verify-runtime playground/public/runtime/micropython.mjs
 ```
 
-The runtime requires matching `provenance.json` and byte-exact ROM fonts in the
-existing pinned Tufty source. This check imports the bundled dependencies and
+This optional graphics check needs the SELECT
+[playground runtime/toolchain](https://github.com/meech-ward/select-badge/tree/main/playground),
+including matching `provenance.json` and byte-exact ROM fonts in the pinned Tufty
+source. Pass the runtime's absolute path when it lives outside this checkout.
+A standalone compiler build above does not require those simulator assets.
+This check imports the bundled dependencies and
 the compiled app entry, requires the local outline font, and decodes/displays a
 deterministic opaque RGBA PNG above 256 KiB and below the 320 KiB photo limit.
 The verifier also exercises the compiled GC-policy lifecycle: preserve a smaller
@@ -81,23 +101,28 @@ laptop provisioning saves a separate refresh-only session. Never put populated
 configuration or sessions in the shared export.
 With no configuration, the complete offline demo opens immediately.
 
-### App-only install from the public starter
+<a id="app-only-install-from-the-public-starter"></a>
 
-The ZIP already contains verified bytecode at `badge/mpy/homehq`; rebuilding is
-optional. Use compatible Badgeware firmware as described above. Install
+### App-only install
+
+From a source build, the bytecode is `homehq/build/standalone/mpy/homehq`.
+An exported starter ZIP already contains it at `badge/mpy/homehq`; rebuilding
+that ZIP is optional. Use compatible Badgeware firmware as described above. Install
 `mpremote` on the computer (`python3 -m pip install mpremote`) for the separate
 state/clock step. Only one serial controller should use a badge at a time.
 
 With the selected badge connected, double-tap its rear RESET button to enter
 **Badgeware Disk Mode**. Back up the entire mounted volume, including hidden
 files. This is the `TUFTY`/`Tufty2350` disk, whose root maps to `/system`.
-From the extracted starter, set its actual mount path and copy only this app:
+Set the actual mount path and the payload path for your source build, then copy
+only this app. For an extracted starter, use `HOMEHQ_APP_SOURCE=badge/mpy/homehq`:
 
 ```sh
 export TUFTY_MOUNT=/Volumes/TUFTY
+export HOMEHQ_APP_SOURCE=homehq/build/standalone/mpy/homehq
 test -d "$TUFTY_MOUNT/apps" &&
 test ! -e "$TUFTY_MOUNT/apps/homehq" &&
-cp -R badge/mpy/homehq "$TUFTY_MOUNT/apps/homehq" &&
+COPYFILE_DISABLE=1 cp -R "$HOMEHQ_APP_SOURCE" "$TUFTY_MOUNT/apps/homehq" &&
 sync
 ```
 

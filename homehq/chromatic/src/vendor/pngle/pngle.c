@@ -121,7 +121,11 @@ struct _pngle_t {
 	uint8_t *next_out; // NULL indicates IDAT hasn't been processed yet
 	size_t  avail_out;
 	tinfl_decompressor inflator; // 11000 bytes
-	uint8_t lz_buf[TINFL_LZ_DICT_SIZE]; // 32768 bytes
+	/* Physical Home HQ had 99 KiB free but only a 23,552-byte largest block.
+	 * Splitting the dictionary lets the permanent inactive HTTP slot supply it,
+	 * instead of requiring one 43,876-byte contiguous decoder allocation. */
+	uint8_t *lz_buf;
+	unsigned char owns_lz_buf;
 };
 
 const size_t PNGLE_T_SIZE = sizeof(pngle_t);
@@ -196,12 +200,28 @@ void pngle_reset(pngle_t *pngle)
 	tinfl_init(&pngle->inflator);
 }
 
-pngle_t *pngle_new()
+pngle_t *pngle_new_with_dictionary(void *dictionary, size_t capacity)
 {
+	if (!dictionary || capacity < TINFL_LZ_DICT_SIZE) return NULL;
 	pngle_t *pngle = (pngle_t *)PNGLE_CALLOC(1, sizeof(pngle_t), "pngle_t");
 	if (!pngle) return NULL;
-
+	/* The sole worker lends its permanent inactive HTTP slot. Owning another
+	 * 32 KiB block failed physically even with 111 KiB free/31,744 largest. */
+	pngle->lz_buf = dictionary;
+	memset(dictionary, 0, TINFL_LZ_DICT_SIZE);
 	pngle_reset(pngle);
+	return pngle;
+}
+
+pngle_t *pngle_new()
+{
+	/* Reserve the largest block before the smaller context can split its hole.
+	 * Home HQ can call this before TLS and its 18 KiB destination allocation. */
+	uint8_t *dictionary = (uint8_t *)PNGLE_CALLOC(TINFL_LZ_DICT_SIZE, 1, "inflate dictionary");
+	if (!dictionary) return NULL;
+	pngle_t *pngle = pngle_new_with_dictionary(dictionary, TINFL_LZ_DICT_SIZE);
+	if (!pngle) { free(dictionary); return NULL; }
+	pngle->owns_lz_buf = 1;
 
 	return pngle;
 }
@@ -210,6 +230,7 @@ void pngle_destroy(pngle_t *pngle)
 {
 	if (pngle) {
 		pngle_reset(pngle);
+		if (pngle->owns_lz_buf) free(pngle->lz_buf);
 		free(pngle);
 	}
 }

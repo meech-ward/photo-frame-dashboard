@@ -1,14 +1,18 @@
 /* Home HQ owns ordinary Auth, cached household data and desired-value writes.
- * The worker alone touches the network. LVGL receives complete copied graphs;
+ * The worker alone touches the network. LVGL receives projected wire copies;
  * a mutex protects brief queue/storage transitions, never an HTTPS operation. */
 #include "homehq.h"
 #include "homehq_pack.h"
 #include "homehq_realtime.h"
+#include "homehq_wire.h"
+#include "homehq_projection.h"
+#include "homehq_http.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <ctype.h>
+#include <sys/time.h>
 #ifdef HQ_SERVICE_HOST_TEST
 #include "service_test_platform.h"
 #else
@@ -33,14 +37,24 @@
 #define WIFI_CONNECTED BIT0
 #define SNAPSHOT_PERIOD_MS 3000
 #define RETRY_MAX_MS 30000
+#define CLOCK_MIN_EPOCH UINT64_C(1704067200)
+#define CLOCK_MAX_EPOCH UINT64_C(4102444800)
 
 static SemaphoreHandle_t guard;
 static EventGroupHandle_t wifi_events;
 static TaskHandle_t worker;
 static nvs_handle_t store;
 static bool store_ok, configured, session_durable, refresh_requested;
-static bool wifi_initialized, wifi_enabled, sntp_started;
-static cJSON *config, *base, *outbox, *delivery, *configuration_intent;
+static bool wifi_initialized, sntp_started;
+static volatile bool wifi_enabled;
+static volatile unsigned latest_wifi_disconnect_reason;
+static volatile bool radio_paused;
+static int64_t last_clock_save_ms;
+static bool clock_checkpointed;
+static cJSON *config, *outbox, *configuration_intent;
+static char *base_wire, *http_scratch;
+static bool delivery_dirty;
+static HQ_WireInfo base_info;
 static bool logout_intent;
 static cJSON *logout_credentials;
 static unsigned generation, next_sequence;
@@ -51,6 +65,11 @@ static char *access_token, *refresh_token, *user_id;
 static int64_t refresh_at_ms;
 static char photo_request[192];
 static unsigned photo_generation;
+static bool photo_cache_clear_pending;
+static int64_t photo_cache_clear_retry_at, photo_restore_retry_at;
+static char photo_restore_path[192];
+static unsigned photo_restore_generation;
+typedef struct { unsigned generation; char user[96], home[96]; } PhotoContext;
 
 static int64_t milliseconds(void) { return esp_timer_get_time() / 1000; }
 static const cJSON *field(const cJSON *o, const char *k) { return cJSON_GetObjectItemCaseSensitive(o, k); }
@@ -71,26 +90,80 @@ static void replace_string(char **slot, const char *s)
     wipe_free(*slot); *slot = copy;
 }
 static void wake_worker(void) { if (worker) xTaskNotifyGive(worker); }
-static cJSON *demo(void) { return cJSON_Parse(homehq_demo_json); }
-static cJSON *empty_snapshot(void)
+static bool reserve_wire_buffers_locked(void);
+static bool photo_current(void *opaque)
 {
-    cJSON *v = demo();
-    if (!v) return NULL;
-    const char *arrays[] = {"people", "events", "chores", "shopping", "photos", "devices", "members", "agents"};
-    for (unsigned i = 0; i < sizeof arrays / sizeof arrays[0]; ++i) {
-        cJSON *array = cJSON_CreateArray();
-        if (field(v, arrays[i])) cJSON_ReplaceItemInObjectCaseSensitive(v, arrays[i], array);
-        else cJSON_AddItemToObject(v, arrays[i], array);
+    PhotoContext *context = opaque;
+    if (!context || !guard) return false;
+    xSemaphoreTake(guard, portMAX_DELAY);
+    bool current = context->generation == generation && configured && session_durable &&
+        !photo_cache_clear_pending && user_id && !strcmp(context->user, user_id) &&
+        !strcmp(context->home, base_info.home);
+    xSemaphoreGive(guard); return current;
+}
+static void clear_photo_cache_worker(void)
+{
+    xSemaphoreTake(guard, portMAX_DELAY);
+    bool clear = photo_cache_clear_pending && milliseconds() >= photo_cache_clear_retry_at;
+    xSemaphoreGive(guard);
+    if (!clear) return;
+    /* Flash cache work is serialized on this worker, outside the UI mutex.
+     * A failed clear blocks only private-photo cache work, never household RPCs. */
+    bool cleared = HQ_PhotoClearCache();
+    xSemaphoreTake(guard, portMAX_DELAY);
+    if (cleared && store_ok && nvs_set_u64(store, "photo_clear", 0) == ESP_OK && nvs_commit(store) == ESP_OK) photo_cache_clear_pending = false;
+    else photo_cache_clear_retry_at = milliseconds() + 5000;
+    xSemaphoreGive(guard);
+}
+static bool restore_photo_worker(unsigned request_generation)
+{
+    char path[sizeof photo_request]; PhotoContext context = {.generation = request_generation};
+    xSemaphoreTake(guard, portMAX_DELAY);
+    bool requested = request_generation == generation && configured && session_durable && user_id &&
+        *base_info.home && !photo_cache_clear_pending && *photo_request && photo_generation == generation &&
+        (photo_restore_generation != generation || strcmp(photo_restore_path, photo_request) || milliseconds() >= photo_restore_retry_at);
+    if (requested) {
+        snprintf(path, sizeof path, "%s", photo_request);
+        snprintf(context.user, sizeof context.user, "%s", user_id);
+        snprintf(context.home, sizeof context.home, "%s", base_info.home);
+        snprintf(photo_restore_path, sizeof photo_restore_path, "%s", path);
+        photo_restore_generation = generation; photo_restore_retry_at = milliseconds() + 10000;
     }
-    cJSON_DeleteItemFromObjectCaseSensitive(v, "viewer");
-    cJSON_DeleteItemFromObjectCaseSensitive(v, "weather");
-    cJSON_DeleteItemFromObjectCaseSensitive(v, "home_status");
-    cJSON *home = cJSON_GetObjectItemCaseSensitive(v, "home");
-    if (home) {
-        cJSON_DeleteItemFromObjectCaseSensitive(home, "id");
-        cJSON_ReplaceItemInObjectCaseSensitive(home, "demo", cJSON_CreateBool(false));
+    xSemaphoreGive(guard);
+    if (!requested) return false;
+    /* Parking TLS gives cache restore its 18 KiB destination budget. Keep
+     * both wire slots permanent: reclaiming one physically left 31,744-byte
+     * holes and prevented a 32 KiB reserve from ever being recreated. */
+    HQ_RTStop();
+    /* A durable cached identity can display its decoded private frame while
+     * Wi-Fi, UTC or access-token refresh is unavailable. No network is needed. */
+    bool restored = HQ_PhotoRestore(context.user, path, photo_current, &context);
+    bool current = photo_current(&context);
+    xSemaphoreTake(guard, portMAX_DELAY);
+    if (restored && current && photo_generation == generation && !strcmp(path, photo_request)) photo_request[0] = 0;
+    xSemaphoreGive(guard);
+    if (!current) HQ_PhotoReset();
+    return restored && current;
+}
+static const char empty_wire[] = "{\"schema_version\":1,\"revision\":0,\"server_time\":0,\"home\":{\"id\":\"signed-out\",\"demo\":false},\"viewer\":{},\"people\":[],\"events\":[],\"chores\":[],\"shopping\":[],\"photos\":[],\"devices\":[],\"members\":[],\"agents\":[]}";
+static bool reserve_wire_buffers_locked(void)
+{
+    /* A joined physical device had 84 KiB free but no block larger than
+     * 23,552 bytes; its valid 25,482-byte HTTPS snapshot could not grow.
+     * Reserve both bounded wire slots before Wi-Fi/LVGL fragment the heap. */
+    if (!base_wire) {
+        base_wire = calloc(1, RESPONSE_MAX + 1);
+        if (!base_wire) return false;
     }
-    return v;
+    if (!http_scratch) http_scratch = calloc(1, RESPONSE_MAX + 1);
+    return http_scratch != NULL;
+}
+static void replace_base_wire_locked(const char *wire)
+{
+    size_t length = strlen(wire);
+    if (length > RESPONSE_MAX || !base_wire) { set_status("Low memory. Retry."); return; }
+    memcpy(base_wire, wire, length + 1);
+    HQ_WireValidate(base_wire, strlen(base_wire), &base_info);
 }
 static const char *section(const char *kind)
 {
@@ -116,7 +189,9 @@ static void apply(cJSON *snapshot, const cJSON *command)
     if (!row) return;
     if (text_equal(command, "kind", "device")) {
         const cJSON *v;
-        cJSON_ArrayForEach(v, field(command, "state")) if (v->string) set_copy(row, v->string, v);
+        cJSON *destination = cJSON_GetObjectItemCaseSensitive(row, "state");
+        if (!cJSON_IsObject(destination)) destination = row;
+        cJSON_ArrayForEach(v, field(command, "state")) if (v->string) set_copy(destination, v->string, v);
     } else {
         set_copy(row, "done", field(command, "done"));
         if (field(command, "done_by")) set_copy(row, "done_by", field(command, "done_by"));
@@ -124,11 +199,9 @@ static void apply(cJSON *snapshot, const cJSON *command)
 }
 static void publish_locked(void)
 {
-    cJSON *v = cJSON_Duplicate(base, true);
-    if (!v) { set_status("Low memory. Retry."); return; }
-    const cJSON *command;
-    cJSON_ArrayForEach(command, outbox) apply(v, command);
-    cJSON_Delete(delivery); delivery = v;
+    /* The canonical wire stays in its reserved slot. A dirty flag avoids a
+     * third 25 KiB allocation; LVGL asks for only its current page's bytes. */
+    delivery_dirty = base_wire != NULL;
 }
 static bool nvs_erase_owned(const char *key)
 {
@@ -166,6 +239,36 @@ static bool save_outbox_locked(void)
     cJSON_Delete(record);
     return ok;
 }
+static bool clock_valid(uint64_t epoch)
+{
+    return epoch >= CLOCK_MIN_EPOCH && epoch <= CLOCK_MAX_EPOCH;
+}
+static bool save_clock_locked(uint64_t epoch, bool force)
+{
+    int64_t now = milliseconds();
+    if (!force && clock_checkpointed && now - last_clock_save_ms < 3600000) return true;
+    if (!store_ok || nvs_set_u64(store, "clock", epoch) != ESP_OK || nvs_commit(store) != ESP_OK) return false;
+    last_clock_save_ms = now; clock_checkpointed = true; return true;
+}
+static bool apply_clock(uint64_t epoch)
+{
+    if (!clock_valid(epoch)) return false;
+    struct timeval time_value = {.tv_sec = (time_t)epoch, .tv_usec = 0};
+    return settimeofday(&time_value, NULL) == 0;
+}
+static void restore_clock_locked(void)
+{
+    uint64_t checkpoint = 0;
+    if (store_ok && nvs_get_u64(store, "clock", &checkpoint) == ESP_OK && apply_clock(checkpoint)) {
+        last_clock_save_ms = milliseconds(); clock_checkpointed = true;
+    }
+}
+static void restore_photo_clear_locked(void)
+{
+    uint64_t intent = 0;
+    photo_cache_clear_pending = store_ok && nvs_get_u64(store, "photo_clear", &intent) == ESP_OK && intent != 0;
+    photo_cache_clear_retry_at = 0;
+}
 static bool save_session_locked(void)
 {
     if (!refresh_token || !user_id) return false;
@@ -182,45 +285,30 @@ static bool save_session_locked(void)
     if (!ok) set_status("Session not saved. Free storage.");
     return ok;
 }
-static bool valid_snapshot(const cJSON *v)
+static bool save_cache_candidate(const char *candidate, unsigned request_generation)
 {
-    const cJSON *schema = field(v, "schema_version"), *home = field(v, "home");
-    if (!cJSON_IsObject(v) || !cJSON_IsNumber(schema) || schema->valueint != 1 || !cJSON_IsObject(home)) return false;
-    const char *arrays[] = {"people", "events", "chores", "shopping", "photos"};
-    for (unsigned i = 0; i < sizeof arrays / sizeof arrays[0]; ++i) if (!cJSON_IsArray(field(v, arrays[i]))) return false;
-    return true;
-}
-static bool save_cache_worker(void)
-{
-    /* Compression can take longer than one display frame. Copy ownership under
-     * the guard, compress outside it, then checkpoint only if the same account
-     * still owns the snapshot. Poll never waits for that work. */
+    uint8_t *packed = malloc(CACHE_MAX);
+    if (!packed || !store_ok) { free(packed); return false; }
+    /* The worker's inactive HTTP slot stays stable while UI account changes
+     * affect only canonical. Compress before swapping slots: this removes
+     * ~49 KiB of old scratch without making buttons wait for dictionary work. */
+    HQ_WireInfo info;
+    size_t bytes = 0;
+    bool encoded = candidate && candidate == http_scratch && HQ_WireValidate(candidate, strlen(candidate), &info) && *info.home &&
+        HQ_PackInto(candidate, strlen(candidate), packed, CACHE_MAX, &bytes) && bytes;
     xSemaphoreTake(guard, portMAX_DELAY);
-    cJSON *snapshot = cJSON_Duplicate(base, true);
-    char *identity = user_id ? strdup(user_id) : NULL;
-    unsigned captured_generation = generation;
-    xSemaphoreGive(guard);
-    if (!snapshot || !identity || !store_ok) { cJSON_Delete(snapshot); free(identity); return false; }
-    char *json = cJSON_PrintUnformatted(snapshot);
-    cJSON_Delete(snapshot);
-    size_t n = json ? strlen(json) : 0, bytes = 0;
-    uint8_t *packed = json && n <= RESPONSE_MAX ? HQ_Pack(json, n, &bytes) : NULL;
-    free(json);
-    xSemaphoreTake(guard, portMAX_DELAY);
-    bool current = captured_generation == generation && user_id && !strcmp(identity, user_id);
-    bool ok = current && packed && bytes && bytes <= CACHE_MAX &&
+    bool current = request_generation == generation && user_id && encoded && !strcmp(info.viewer, user_id);
+    bool ok = current &&
         nvs_set_blob(store, "cache", packed, bytes) == ESP_OK &&
-        nvs_set_str(store, "cache_user", identity) == ESP_OK && nvs_commit(store) == ESP_OK;
-    /* The factory partition is only 24 KiB. An incompressible large home stays
-     * usable in RAM; rejecting its cache must not evict durable session/outbox. */
+        nvs_set_str(store, "cache_user", user_id) == ESP_OK && nvs_commit(store) == ESP_OK;
     if (current && !ok) {
         nvs_erase_owned("cache"); nvs_erase_owned("cache_user"); nvs_commit(store);
         set_status("Connected. Cache full.");
     }
     xSemaphoreGive(guard);
-    free(packed); free(identity); return ok;
+    free(packed); return ok;
 }
-static cJSON *load_cache_locked(void)
+static char *load_cache_locked(void)
 {
     char identity[96] = {0}; size_t n = sizeof identity;
     if (!user_id || nvs_get_str(store, "cache_user", identity, &n) != ESP_OK || strcmp(identity, user_id)) return NULL;
@@ -229,17 +317,19 @@ static cJSON *load_cache_locked(void)
     uint8_t *packed = malloc(packed_length);
     if (!packed) return NULL;
     size_t decoded = 0;
-    char *json = nvs_get_blob(store, "cache", packed, &packed_length) == ESP_OK ? HQ_Unpack(packed, packed_length, &decoded) : NULL;
-    cJSON *v = json && decoded ? cJSON_ParseWithLength(json, decoded + 1) : NULL;
-    free(packed); free(json);
-    if (!valid_snapshot(v)) { cJSON_Delete(v); return NULL; }
-    const char *viewer = string_field(field(v, "viewer"), "user_id");
-    if (*viewer && strcmp(viewer, user_id)) { cJSON_Delete(v); return NULL; }
-    return v;
+    char *wire = nvs_get_blob(store, "cache", packed, &packed_length) == ESP_OK ? HQ_Unpack(packed, packed_length, &decoded) : NULL;
+    free(packed);
+    HQ_WireInfo info;
+    if (!wire || !HQ_WireValidate(wire, decoded, &info) || !*info.home || strcmp(info.viewer, user_id)) { free(wire); return NULL; }
+    return wire;
 }
 static bool clear_identity_locked(void)
 {
     if (!store_ok) return false;
+    /* Persist intent before acknowledging logout/setup. A reset before the
+     * worker invalidates both flash headers must still purge the old frame. */
+    if (nvs_set_u64(store, "photo_clear", 1) != ESP_OK) return false;
+    photo_cache_clear_pending = true; photo_cache_clear_retry_at = 0;
     /* Erase exact app-owned entries, never factory settings, Wi-Fi/project
      * configuration or a different application's state. */
     bool ok = nvs_erase_owned("session") && nvs_erase_owned("cache") &&
@@ -248,7 +338,8 @@ static bool clear_identity_locked(void)
     replace_string(&access_token, NULL); replace_string(&refresh_token, NULL); replace_string(&user_id, NULL);
     session_durable = false; refresh_at_ms = 0;
     cJSON_Delete(outbox); outbox = cJSON_CreateArray();
-    photo_request[0] = 0; HQ_PhotoReset();
+    photo_request[0] = photo_restore_path[0] = 0;
+    photo_cache_clear_pending = true; photo_cache_clear_retry_at = 0; HQ_PhotoReset();
     return true;
 }
 static bool ordinary_key(const char *key)
@@ -322,49 +413,59 @@ static esp_err_t http_event(esp_http_client_event_t *event)
     if (event->event_id != HTTP_EVENT_ON_DATA || event->data_len <= 0) return ESP_OK;
     size_t total = r->length + (size_t)event->data_len;
     if (total > RESPONSE_MAX) { r->overflow = true; return ESP_FAIL; }
-    if (total + 1 > r->capacity) {
-        size_t capacity = (total + 1024) & ~(size_t)1023;
-        if (capacity > RESPONSE_MAX + 1) capacity = RESPONSE_MAX + 1;
-        char *p = realloc(r->data, capacity);
-        if (!p) { r->overflow = true; return ESP_FAIL; }
-        r->data = p; r->capacity = capacity;
-    }
+    if (!r->data || total + 1 > r->capacity) { r->overflow = true; return ESP_FAIL; }
     memcpy(r->data + r->length, event->data, event->data_len);
     r->length = total; r->data[total] = 0;
     return ESP_OK;
 }
-static cJSON *http_json(const cJSON *cfg, const char *jwt, const char *path, const cJSON *body, int *status)
+/* The response borrows the worker's inactive reserved slot. It must never be
+ * freed: Auth parses then scrubs it, while a valid snapshot swaps the slots. */
+static char *http_body(const cJSON *cfg, const char *jwt, const char *path, const cJSON *body, int *status)
 {
     *status = 0;
+    xSemaphoreTake(guard, portMAX_DELAY);
+    bool reserved = reserve_wire_buffers_locked();
+    xSemaphoreGive(guard);
+    if (!reserved) return NULL;
+    http_scratch[0] = 0;
     const char *origin = string_field(cfg, "url"), *key = string_field(cfg, "key");
+    const char *token = jwt && *jwt ? jwt : key;
+    unsigned tx_size = HQ_HttpTxSize(token, key, 4096);
+    if (!tx_size) return NULL;
     char url[512];
     if (snprintf(url, sizeof url, "%s%s", origin, path) >= (int)sizeof url) return NULL;
     char *payload = body ? cJSON_PrintUnformatted(body) : strdup("");
     if (!payload) return NULL;
-    response_t response = {0};
+    response_t response = {.data = http_scratch, .capacity = RESPONSE_MAX + 1};
     esp_http_client_config_t settings = {.url = url, .method = HTTP_METHOD_POST,
         .timeout_ms = 12000, .event_handler = http_event, .user_data = &response,
         .crt_bundle_attach = esp_crt_bundle_attach, .disable_auto_redirect = true,
-        .buffer_size = 1024, .buffer_size_tx = 1024};
+        .buffer_size = 1024, .buffer_size_tx = (int)tx_size};
     esp_http_client_handle_t client = esp_http_client_init(&settings);
     if (!client) { wipe_free(payload); return NULL; }
-    esp_http_client_set_header(client, "apikey", key);
-    esp_http_client_set_header(client, "Content-Type", "application/json");
-    esp_http_client_set_header(client, "X-Supabase-Api-Version", "2024-01-01");
-    size_t auth_length = strlen(jwt && *jwt ? jwt : key) + 8;
+    bool prepared = esp_http_client_set_header(client, "apikey", key) == ESP_OK &&
+        esp_http_client_set_header(client, "Content-Type", "application/json") == ESP_OK &&
+        esp_http_client_set_header(client, "X-Supabase-Api-Version", "2024-01-01") == ESP_OK;
+    size_t auth_length = strlen(token) + 8;
     char *authorization = malloc(auth_length);
     if (authorization) {
-        snprintf(authorization, auth_length, "Bearer %s", jwt && *jwt ? jwt : key);
-        esp_http_client_set_header(client, "Authorization", authorization);
+        snprintf(authorization, auth_length, "Bearer %s", token);
+        prepared = prepared && esp_http_client_set_header(client, "Authorization", authorization) == ESP_OK;
     }
     esp_http_client_set_post_field(client, payload, strlen(payload));
-    esp_err_t result = authorization ? esp_http_client_perform(client) : ESP_ERR_NO_MEM;
+    esp_err_t result = authorization && prepared ? esp_http_client_perform(client) : ESP_ERR_NO_MEM;
     if (result == ESP_OK && !response.overflow) *status = esp_http_client_get_status_code(client);
     esp_http_client_cleanup(client);
     wipe_free(authorization); wipe_free(payload);
-    cJSON *json = *status && response.length ? cJSON_ParseWithLength(response.data, response.length + 1) : NULL;
-    wipe_free(response.data);
-    return json;
+    if (!*status || !response.length) { memset(response.data, 0, response.length); return NULL; }
+    return response.data;
+}
+static cJSON *http_json(const cJSON *cfg, const char *jwt, const char *path, const cJSON *body, int *status)
+{
+    char *wire = http_body(cfg, jwt, path, body, status);
+    cJSON *value = wire ? cJSON_Parse(wire) : NULL;
+    if (wire) memset(wire, 0, strlen(wire));
+    return value;
 }
 static void wifi_event(void *unused, esp_event_base_t event, int32_t id, void *data)
 {
@@ -372,10 +473,12 @@ static void wifi_event(void *unused, esp_event_base_t event, int32_t id, void *d
     if (event == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         xEventGroupSetBits(wifi_events, WIFI_CONNECTED); wake_worker();
     } else if (event == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+        const wifi_event_sta_disconnected_t *disconnected = data;
+        latest_wifi_disconnect_reason = disconnected ? disconnected->reason : 0;
         xEventGroupClearBits(wifi_events, WIFI_CONNECTED);
-        if (wifi_enabled) esp_wifi_connect();
+        if (wifi_enabled && !radio_paused) esp_wifi_connect();
         wake_worker();
-    } else if (event == WIFI_EVENT && id == WIFI_EVENT_STA_START && wifi_enabled) esp_wifi_connect();
+    } else if (event == WIFI_EVENT && id == WIFI_EVENT_STA_START && wifi_enabled && !radio_paused) esp_wifi_connect();
 }
 static bool start_wifi(const cJSON *cfg)
 {
@@ -398,11 +501,16 @@ static bool start_wifi(const cJSON *cfg)
     memcpy(wifi.sta.ssid, ssid, strlen(ssid)); memcpy(wifi.sta.password, password, strlen(password));
     xEventGroupClearBits(wifi_events, WIFI_CONNECTED);
     if (esp_wifi_set_mode(WIFI_MODE_STA) != ESP_OK || esp_wifi_set_config(WIFI_IF_STA, &wifi) != ESP_OK) return false;
-    wifi_enabled = true;
+    wifi_enabled = !radio_paused;
     if (esp_wifi_start() != ESP_OK) { wifi_enabled = false; return false; }
     esp_wifi_set_ps(WIFI_PS_NONE);
     if (!sntp_started) {
+#if CONFIG_LWIP_SNTP_MAX_SERVERS >= 3
+        esp_sntp_config_t settings = ESP_NETIF_SNTP_DEFAULT_CONFIG_MULTIPLE(3,
+            ESP_SNTP_SERVER_LIST("time.cloudflare.com", "time.google.com", "pool.ntp.org"));
+#else
         esp_sntp_config_t settings = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
+#endif
         sntp_started = esp_netif_sntp_init(&settings) == ESP_OK;
     }
     return true;
@@ -491,25 +599,31 @@ static bool authenticate(const cJSON *cfg, const cJSON *login, unsigned request_
 }
 static void prune_missing_locked(void)
 {
-    for (int i = cJSON_GetArraySize(outbox) - 1; i >= 0; --i)
-        if (!find_row(base, cJSON_GetArrayItem(outbox, i))) cJSON_DeleteItemFromArray(outbox, i);
+    for (int i = cJSON_GetArraySize(outbox) - 1; i >= 0; --i) {
+        const cJSON *command = cJSON_GetArrayItem(outbox, i);
+        if (!HQ_WireHasRow(base_wire, strlen(base_wire), section(string_field(command, "kind")), string_field(command, "id")))
+            cJSON_DeleteItemFromArray(outbox, i);
+    }
 }
-static bool install_snapshot(cJSON *v, unsigned request_generation)
+static bool install_snapshot_wire(char *wire, unsigned request_generation)
 {
-    if (!valid_snapshot(v)) return false;
+    HQ_WireInfo info;
+    if (!wire || wire != http_scratch || !HQ_WireValidate(wire, strlen(wire), &info)) return false;
     xSemaphoreTake(guard, portMAX_DELAY);
-    const char *viewer = string_field(field(v, "viewer"), "user_id");
-    bool ok = request_generation == generation && user_id && !strcmp(viewer, user_id) &&
-              *string_field(field(v, "home"), "id");
+    bool ok = request_generation == generation && user_id && !strcmp(info.viewer, user_id) && *info.home;
     if (ok) {
-        cJSON_Delete(base); base = v;
+        /* Keep the old canonical slot intact until the complete bounded reply
+         * passes syntax, identity and generation checks. No wire is copied. */
+        char *old = base_wire; base_wire = wire; http_scratch = old; base_info = info;
+        /* This timestamp arrived through normally verified HTTPS. Keep a
+         * boot checkpoint at most hourly; public SNTP still corrects real time. */
+        if (info.server_time > 0 && apply_clock((uint64_t)info.server_time))
+            save_clock_locked((uint64_t)info.server_time, false);
         prune_missing_locked();
         bool queue_saved = save_outbox_locked();
-        publish_locked();
         set_status(!queue_saved ? "Changes not saved. Free storage." : "Connected");
     }
-    xSemaphoreGive(guard);
-    return ok;
+    xSemaphoreGive(guard); return ok;
 }
 static bool acknowledge_locked(const cJSON *sent, const cJSON *reply)
 {
@@ -518,11 +632,6 @@ static bool acknowledge_locked(const cJSON *sent, const cJSON *reply)
     const cJSON *version = field(row, "version");
     if ((!strcmp(result, "saved") || !strcmp(result, "conflict")) && cJSON_IsObject(row) &&
         cJSON_IsNumber(version) && version->valuedouble >= 1 && text_equal(row, "id", string_field(sent, "id"))) {
-        cJSON *rows = cJSON_GetObjectItemCaseSensitive(base, section(string_field(sent, "kind")));
-        for (int i = 0; i < cJSON_GetArraySize(rows); ++i)
-            if (text_equal(cJSON_GetArrayItem(rows, i), "id", string_field(sent, "id"))) {
-                cJSON_ReplaceItemInArray(rows, i, cJSON_Duplicate(row, true)); break;
-            }
         for (int i = 0; i < cJSON_GetArraySize(outbox); ++i) {
             cJSON *pending = cJSON_GetArrayItem(outbox, i);
             if (!text_equal(pending, "kind", string_field(sent, "kind")) || !text_equal(pending, "id", string_field(sent, "id"))) continue;
@@ -534,10 +643,9 @@ static bool acknowledge_locked(const cJSON *sent, const cJSON *reply)
             else if (field(row, "version")) set_copy(pending, "version", field(row, "version"));
             break;
         }
-        if (field(reply, "revision")) set_copy(base, "revision", field(reply, "revision"));
         if (!save_outbox_locked()) set_status("Changes not saved. Free storage.");
         else set_status(!strcmp(result, "conflict") ? "Changed elsewhere. Reloaded." : "Saved");
-        publish_locked(); refresh_requested = true; return true;
+        refresh_requested = true; return true;
     }
     set_status("Save unavailable. Retrying."); return false;
 }
@@ -596,6 +704,9 @@ static void revoke_local_session(const cJSON *cfg, cJSON *credentials)
 static void service_worker(void *unused)
 {
     (void)unused;
+    /* Main must finish the first panel before Wi-Fi and TLS reserve their
+     * buffers; task creation can otherwise preempt the lower-priority boot. */
+    vTaskDelay(pdMS_TO_TICKS(300));
     unsigned retry_ms = 1000;
     int64_t next_snapshot = 0, retry_at = 0;
     cJSON *login = NULL;
@@ -609,6 +720,7 @@ static void service_worker(void *unused)
         cJSON *cfg = cJSON_Duplicate(config, true);
         bool ready = configured;
         xSemaphoreGive(guard);
+        clear_photo_cache_worker();
         if (logging_out) {
             HQ_RTStop();
             if (cfg && departing && (xEventGroupGetBits(wifi_events) & WIFI_CONNECTED) && time(NULL) >= 1704067200)
@@ -634,13 +746,14 @@ static void service_worker(void *unused)
             xSemaphoreGive(guard);
             next_snapshot = retry_at = 0; retry_ms = 1000;
         } else if (ready && !wifi_initialized && cfg) start_wifi(cfg);
+        if (restore_photo_worker(current_generation)) { cJSON_Delete(cfg); continue; }
         if (!ready || !cfg) { HQ_RTStop(); cJSON_Delete(cfg); ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1000)); continue; }
         bool connected = (xEventGroupGetBits(wifi_events) & WIFI_CONNECTED) != 0;
         int64_t now = milliseconds();
         if (!connected || time(NULL) < 1704067200 || now < retry_at) {
             if (!connected) HQ_RTStop();
             xSemaphoreTake(guard, portMAX_DELAY);
-            if (current_generation == generation && now >= retry_at) set_status(!connected ? "Offline. Changes queued." : "Syncing time for HTTPS");
+            if (current_generation == generation && now >= retry_at) set_status(!connected ? (radio_paused ? "Radio paused. Changes queued." : "Offline. Changes queued.") : "Syncing time for HTTPS");
             xSemaphoreGive(guard);
             cJSON_Delete(cfg); ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1000)); continue;
         }
@@ -669,12 +782,25 @@ static void service_worker(void *unused)
             xSemaphoreGive(guard);
             cJSON_Delete(cfg); ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1000)); continue;
         }
+        if (!http_scratch) HQ_RTStop();
+        xSemaphoreTake(guard, portMAX_DELAY);
+        bool wire_ready = reserve_wire_buffers_locked();
+        if (!wire_ready) set_status("Low memory. Retry.");
+        xSemaphoreGive(guard);
+        if (!wire_ready) { cJSON_Delete(cfg); ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1000)); continue; }
         xSemaphoreTake(guard, portMAX_DELAY);
         char *jwt = access_token ? strdup(access_token) : NULL;
-        char home[96]; snprintf(home, sizeof home, "%s", string_field(field(base, "home"), "id"));
+        char home[96]; snprintf(home, sizeof home, "%s", base_info.home);
+        PhotoContext photo_context = {.generation = current_generation};
+        snprintf(photo_context.user, sizeof photo_context.user, "%s", user_id ? user_id : "");
+        snprintf(photo_context.home, sizeof photo_context.home, "%s", base_info.home);
         xSemaphoreGive(guard);
         if (jwt && *home) { HQ_RTConfigure(string_field(cfg, "url"), string_field(cfg, "key"), home, jwt); HQ_RTPoll(); }
         else HQ_RTStop();
+        /* A socket lost after a 60-second joined poll must promptly resume
+         * fallback polling rather than retaining the old joined deadline. */
+        int64_t fallback_deadline = milliseconds() + SNAPSHOT_PERIOD_MS;
+        if (!HQ_RTJoined() && next_snapshot > fallback_deadline) next_snapshot = fallback_deadline;
         xSemaphoreTake(guard, portMAX_DELAY);
         if (current_generation != generation) {
             xSemaphoreGive(guard); wipe_free(jwt); cJSON_Delete(cfg); HQ_RTStop(); continue;
@@ -683,18 +809,26 @@ static void service_worker(void *unused)
         refresh_requested = false;
         cJSON *sent = !snapshot_now ? cJSON_Duplicate(cJSON_GetArrayItem(outbox, 0), true) : NULL;
         char photo[sizeof photo_request] = {0};
-        if (!snapshot_now && !sent && photo_generation == current_generation) {
+        if (!snapshot_now && !sent && !photo_cache_clear_pending && photo_generation == current_generation) {
             snprintf(photo, sizeof photo, "%s", photo_request); photo_request[0] = 0;
         }
         xSemaphoreGive(guard);
         if (!jwt) { cJSON_Delete(sent); cJSON_Delete(cfg); continue; }
         if (*photo) {
+            /* The sole worker lends its inactive HTTP slot as the 32 KiB PNG
+             * dictionary. No HTTP call overlaps decoding, and canonical stays
+             * untouched. Parking TLS leaves room for context and destination. */
+            HQ_RTStop();
             char url[512];
             snprintf(url, sizeof url, "%s/storage/v1/object/authenticated/homehq-photos/%s", string_field(cfg, "url"), photo);
-            xSemaphoreTake(guard, portMAX_DELAY); bool photo_current = current_generation == generation; xSemaphoreGive(guard);
-            if (photo_current) HQ_PhotoDownload(url, jwt, string_field(cfg, "key"));
-            xSemaphoreTake(guard, portMAX_DELAY); photo_current = current_generation == generation; xSemaphoreGive(guard);
-            if (!photo_current) HQ_PhotoReset();
+            bool photo_is_current = photo_current(&photo_context);
+            if (photo_is_current) HQ_PhotoDownload(url, jwt, string_field(cfg, "key"), photo_context.user, photo_current, &photo_context,
+                                                  (uint8_t *)http_scratch, RESPONSE_MAX + 1);
+            xSemaphoreTake(guard, portMAX_DELAY);
+            photo_is_current = current_generation == generation;
+            if (photo_is_current) refresh_requested = true;
+            xSemaphoreGive(guard);
+            if (!photo_is_current) HQ_PhotoReset();
             wipe_free(jwt); cJSON_Delete(cfg); continue;
         }
         if (!snapshot_now && !sent) {
@@ -703,12 +837,15 @@ static void service_worker(void *unused)
         const char *path = "/rest/v1/rpc/homehq_snapshot";
         cJSON *body = snapshot_now ? cJSON_CreateObject() : rpc_body(sent, &path);
         int status;
-        cJSON *reply = body ? http_json(cfg, jwt, path, body, &status) : NULL;
+        char *snapshot_wire = snapshot_now && body ? http_body(cfg, jwt, path, body, &status) : NULL;
+        cJSON *reply = !snapshot_now && body ? http_json(cfg, jwt, path, body, &status) : NULL;
         if (!body) status = 0;
         cJSON_Delete(body); wipe_free(jwt); cJSON_Delete(cfg);
-        bool success = status >= 200 && status < 300 && reply;
+        bool success = status >= 200 && status < 300 && (snapshot_now ? snapshot_wire != NULL : reply != NULL);
+        bool cache_saved = true;
         if (success && snapshot_now) {
-            if (install_snapshot(reply, current_generation)) { reply = NULL; next_snapshot = milliseconds() + (HQ_RTJoined() ? 60000 : SNAPSHOT_PERIOD_MS); }
+            cache_saved = save_cache_candidate(snapshot_wire, current_generation);
+            if (install_snapshot_wire(snapshot_wire, current_generation)) { snapshot_wire = NULL; next_snapshot = milliseconds() + (HQ_RTJoined() ? 60000 : SNAPSHOT_PERIOD_MS); }
             else success = false;
         } else if (success) {
             xSemaphoreTake(guard, portMAX_DELAY);
@@ -716,7 +853,14 @@ static void service_worker(void *unused)
             else success = false;
             xSemaphoreGive(guard);
         }
-        if (success) save_cache_worker();
+        if (success && snapshot_now) {
+            xSemaphoreTake(guard, portMAX_DELAY);
+            if (current_generation == generation) {
+                if (!cache_saved && !strcmp(status_text, "Connected")) set_status("Connected. Cache full.");
+                publish_locked();
+            }
+            xSemaphoreGive(guard);
+        }
         if (!success) {
             if (status == 401) HQ_RTStop();
             xSemaphoreTake(guard, portMAX_DELAY);
@@ -729,6 +873,7 @@ static void service_worker(void *unused)
             retry_at = milliseconds() + retry_ms;
             retry_ms = retry_ms < RETRY_MAX_MS / 2 ? retry_ms * 2 : RETRY_MAX_MS;
         } else { retry_at = 0; retry_ms = 1000; }
+        if (snapshot_wire) memset(snapshot_wire, 0, strlen(snapshot_wire));
         cJSON_Delete(reply); cJSON_Delete(sent);
     }
 }
@@ -738,21 +883,24 @@ void HQ_ServiceInit(void)
     if (guard) return;
     guard = xSemaphoreCreateMutex(); wifi_events = xEventGroupCreate();
     if (!guard || !wifi_events) return;
+    if (!reserve_wire_buffers_locked()) set_status("Low memory. Retry.");
     store_ok = nvs_open("homehq", NVS_READWRITE, &store) == ESP_OK;
+    restore_clock_locked();
+    restore_photo_clear_locked();
     config = read_json("config", 4096);
     configured = cJSON_IsObject(config) && safe_url(string_field(config, "url")) && ordinary_key(string_field(config, "key")) && *string_field(config, "wifi_ssid") &&
         strlen(string_field(config, "wifi_ssid")) <= 32 && strlen(string_field(config, "wifi_password")) <= 63;
     if (!configured) { cJSON_Delete(config); config = NULL; }
     outbox = cJSON_CreateArray();
-    base = configured ? empty_snapshot() : demo();
+    replace_base_wire_locked(configured ? empty_wire : homehq_demo_json);
     cJSON *record = read_json("session", 2048);
     if (configured && cJSON_IsObject(record) && *string_field(record, "user_id") && strlen(string_field(record, "user_id")) <= 80 &&
         *string_field(record, "refresh_token") && strlen(string_field(record, "refresh_token")) <= 1024) {
         replace_string(&user_id, string_field(record, "user_id"));
         replace_string(&refresh_token, string_field(record, "refresh_token"));
         session_durable = user_id && refresh_token;
-        cJSON *cache = load_cache_locked();
-        if (cache) { cJSON_Delete(base); base = cache; }
+        char *cache = load_cache_locked();
+        if (cache) { replace_base_wire_locked(cache); free(cache); }
         cJSON *saved = read_json("outbox", 14336);
         if (saved && text_equal(saved, "user_id", user_id)) {
             cJSON *command;
@@ -769,12 +917,46 @@ void HQ_ServiceInit(void)
     publish_locked(); refresh_requested = configured;
     if (xTaskCreate(service_worker, "homehq_net", 8192, NULL, 3, &worker) != pdPASS) { worker = NULL; set_status("Network unavailable"); }
 }
+char *HQ_ServicePollWire(void)
+{
+    return HQ_ServicePollViewWire("today");
+}
+char *HQ_ServicePollViewWire(const char *page)
+{
+    if (!page) return NULL;
+    if (!guard || xSemaphoreTake(guard, 0) != pdTRUE) return NULL;
+    char *wire = delivery_dirty && base_wire ? HQ_ProjectCopy(base_wire, strlen(base_wire), page) : NULL;
+    /* A failed allocation leaves the update pending; the old UI remains
+     * authoritative until a complete replacement can be constructed. */
+    if (wire) delivery_dirty = false;
+    xSemaphoreGive(guard); return wire;
+}
+char *HQ_ServiceViewWire(const char *page)
+{
+    if (!guard || !page) return NULL;
+    xSemaphoreTake(guard, portMAX_DELAY);
+    /* A hosted canonical snapshot is ~25 KiB. Allocate only the requested
+     * page's bytes so a page turn can fit beside a joined TLS connection.
+     * The two projection passes require the canonical source to stay stable. */
+    char *wire = base_wire ? HQ_ProjectCopy(base_wire, strlen(base_wire), page) : NULL;
+    xSemaphoreGive(guard);
+    return wire;
+}
+void HQ_ServiceOverlay(cJSON *ui_graph)
+{
+    if (!guard || !ui_graph) return;
+    xSemaphoreTake(guard, portMAX_DELAY);
+    const cJSON *command;
+    cJSON_ArrayForEach(command, outbox) apply(ui_graph, command);
+    xSemaphoreGive(guard);
+}
+/* Legacy callers receive Today projection. Native LVGL asks for its current
+ * page and releases its previous graph before parsing the replacement. */
 cJSON *HQ_ServicePoll(void)
 {
-    if (!guard) return NULL;
-    if (xSemaphoreTake(guard, 0) != pdTRUE) return NULL;
-    cJSON *v = delivery; delivery = NULL;
-    xSemaphoreGive(guard); return v;
+    char *wire = HQ_ServicePollWire();
+    cJSON *value = wire ? cJSON_Parse(wire) : NULL;
+    free(wire); HQ_ServiceOverlay(value); return value;
 }
 void HQ_ServiceStatus(char *buffer, unsigned capacity, unsigned *pending)
 {
@@ -784,18 +966,62 @@ void HQ_ServiceStatus(char *buffer, unsigned capacity, unsigned *pending)
     if (pending) *pending = (unsigned)cJSON_GetArraySize(outbox);
     xSemaphoreGive(guard);
 }
+void HQ_ServiceDiagnostics(HQ_ServiceDiagnosticsInfo *result)
+{
+    if (!result) return;
+    memset(result, 0, sizeof *result);
+    if (!guard) return;
+    xSemaphoreTake(guard, portMAX_DELAY);
+    result->configured = configured;
+    result->authenticated = access_token && session_durable;
+    result->session_saved = session_durable;
+    result->wifi_enabled = wifi_enabled;
+    result->wifi_connected = wifi_events && (xEventGroupGetBits(wifi_events) & WIFI_CONNECTED);
+    result->wifi_disconnect_reason = latest_wifi_disconnect_reason;
+    result->radio_paused = radio_paused;
+    result->clock_ready = clock_valid((uint64_t)time(NULL));
+    result->realtime_joined = HQ_RTJoined();
+    result->pending = cJSON_GetArraySize(outbox);
+    result->revision = base_info.revision >= 0 && (uint64_t)base_info.revision <= UINT32_MAX ? (unsigned)base_info.revision : 0;
+    xSemaphoreGive(guard);
+}
+bool HQ_ServiceSetClock(uint64_t epoch)
+{
+    if (!guard || !clock_valid(epoch) || !apply_clock(epoch)) return false;
+    xSemaphoreTake(guard, portMAX_DELAY);
+    /* A USB clock is trusted setup input. Checkpoint only our namespace and
+     * retain it on logout, so lack of a battery RTC never weakens TLS checks. */
+    bool ok = save_clock_locked(epoch, true);
+    xSemaphoreGive(guard); wake_worker(); return ok;
+}
+bool HQ_ServiceRadio(bool enabled)
+{
+    if (!guard) return false;
+    xSemaphoreTake(guard, portMAX_DELAY);
+    radio_paused = !enabled;
+    wifi_enabled = enabled && wifi_initialized && configured;
+    bool initialized = wifi_initialized, connect = wifi_enabled;
+    if (!enabled && wifi_events) xEventGroupClearBits(wifi_events, WIFI_CONNECTED);
+    refresh_requested = enabled;
+    if (!enabled) set_status("Radio paused. Changes queued.");
+    xSemaphoreGive(guard);
+    /* This recovery control is transient: it never alters saved credentials or
+     * other devices. The pause flag suppresses the normal disconnect reconnect. */
+    if (initialized) { if (connect) esp_wifi_connect(); else if (!enabled) esp_wifi_disconnect(); }
+    wake_worker(); return true;
+}
 bool HQ_ServiceCommand(const cJSON *command)
 {
     if (!guard || !valid_command(command)) return false;
     xSemaphoreTake(guard, portMAX_DELAY);
-    if ((configured && (!user_id || !refresh_token || !session_durable || logout_intent || configuration_intent)) || !find_row(base, command)) {
+    if ((configured && (!user_id || !refresh_token || !session_durable || logout_intent || configuration_intent))) {
         set_status("Sign in to your home"); xSemaphoreGive(guard); return false;
     }
     cJSON *queued = bounded_command(command);
     if (!queued) { set_status("Low memory. Retry."); xSemaphoreGive(guard); return false; }
     cJSON_AddNumberToObject(queued, "sequence", ++next_sequence);
     if (!configured) {
-        apply(base, queued); cJSON_Delete(queued); publish_locked(); set_status("Demo. Local changes.");
+        cJSON_Delete(queued); set_status("Demo. Local changes.");
         xSemaphoreGive(guard); return true;
     }
     cJSON *old_queue = cJSON_Duplicate(outbox, true);
@@ -815,7 +1041,7 @@ bool HQ_ServiceCommand(const cJSON *command)
     if (replace >= 0) cJSON_ReplaceItemInArray(outbox, replace, queued); else cJSON_AddItemToArray(outbox, queued);
     bool ok = save_outbox_locked();
     if (!ok) { cJSON_Delete(outbox); outbox = old_queue; set_status("Changes not saved. Free storage."); }
-    else { cJSON_Delete(old_queue); publish_locked(); set_status("Changes queued"); }
+    else { cJSON_Delete(old_queue); set_status("Changes queued"); }
     xSemaphoreGive(guard); if (ok) wake_worker();
     return ok;
 }
@@ -842,7 +1068,7 @@ bool HQ_ServiceConfigure(const cJSON *configuration)
         ok = clear_identity_locked();
         if (ok) {
             ++generation;
-            cJSON_Delete(base); base = empty_snapshot(); publish_locked();
+            replace_base_wire_locked(empty_wire); publish_locked();
             ok = save_json("config", public);
             if (!ok) set_status("Setup not saved. Free storage.");
         }
@@ -872,7 +1098,7 @@ bool HQ_ServiceLogout(void)
         cJSON_Delete(logout_credentials); logout_credentials = credentials; credentials = NULL;
         ++generation; scrub_login(configuration_intent); configuration_intent = NULL;
         logout_intent = true; configured = false; HQ_PhotoReset();
-        cJSON_Delete(base); base = demo(); publish_locked(); set_status("Demo. Signed out.");
+        replace_base_wire_locked(homehq_demo_json); publish_locked(); set_status("Demo. Signed out.");
     }
     xSemaphoreGive(guard);
     if (credentials) {
@@ -892,7 +1118,7 @@ bool HQ_ServicePhotoRequest(const char *path)
 {
     if (!guard || !path || !*path || strlen(path) >= sizeof photo_request) return false;
     xSemaphoreTake(guard, portMAX_DELAY);
-    const char *home = string_field(field(base, "home"), "id"); size_t n = strlen(home), length = strlen(path);
+    const char *home = base_info.home; size_t n = strlen(home), length = strlen(path);
     bool ok = configured && user_id && n && !strncmp(path, home, n) && path[n] == '/' && length > n + 5 &&
               !strcmp(path + length - 4, ".png") && !strstr(path, "..");
     for (const char *p = path; ok && *p; ++p) if (!(isalnum((unsigned char)*p) || *p == '-' || *p == '_' || *p == '/' || *p == '.')) ok = false;
@@ -911,7 +1137,7 @@ bool HQ_ServiceSignIn(const char *email, const char *password)
     bool ok = config && !configuration_intent && !logout_intent;
     if (ok && !cJSON_GetArraySize(outbox)) {
         ok = clear_identity_locked();
-        if (ok) { cJSON_Delete(base); base = empty_snapshot(); publish_locked(); HQ_PhotoReset(); }
+        if (ok) { replace_base_wire_locked(empty_wire); publish_locked(); HQ_PhotoReset(); }
     }
     /* A lost refresh session can still have durable offline writes. Preserve
      * those and require the password response's user id to match their owner;

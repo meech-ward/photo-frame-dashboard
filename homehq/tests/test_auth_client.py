@@ -8,8 +8,9 @@ import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
-for path in (ROOT / "network/vendor", ROOT / "badgelink/badge", ROOT / "network/badge", ROOT / "homehq/badge/homehq"):
-    sys.path.insert(0, str(path))
+sys.path.insert(0, str(ROOT / "homehq/tools"))
+from dependencies import add_import_paths
+add_import_paths(ROOT)
 from transport import SupabaseTransport
 from auth_client import session_record
 from service import Service

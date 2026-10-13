@@ -13,6 +13,7 @@ struct HQ_PngStream {
     uint32_t sampled_pixels;
     bool failed;
     bool done;
+    bool header_verified;
     uint8_t header[33];
     uint8_t input[2048];
 };
@@ -71,27 +72,57 @@ static void done(pngle_t *pngle)
     stream->done = true;
 }
 
-HQ_PngStream *HQ_PngNew(uint16_t *pixels)
+static HQ_PngStream *prepare_stream(pngle_t *decoder)
 {
-    if (!pixels) return NULL;
+    if (!decoder) return NULL;
     HQ_PngStream *stream = calloc(1, sizeof(*stream));
-    if (!stream) return NULL;
+    if (!stream) { pngle_destroy(decoder); return NULL; }
+    stream->decoder = decoder;
+    pngle_set_user_data(decoder, stream);
+    pngle_set_draw_callback(decoder, draw_pixel);
+    pngle_set_done_callback(decoder, done);
+    return stream;
+}
+
+HQ_PngStream *HQ_PngPrepare(void)
+{
+    return prepare_stream(pngle_new());
+}
+
+HQ_PngStream *HQ_PngPrepareWithDictionary(void *dictionary, size_t capacity)
+{
+    /* Native photos cannot retire/reallocate a 32 KiB wire slot: physical
+     * largest blocks fell to 31,744 bytes. Borrow it while HTTP is idle. */
+    return prepare_stream(pngle_new_with_dictionary(dictionary, capacity));
+}
+
+bool HQ_PngSetPixels(HQ_PngStream *stream, uint16_t *pixels)
+{
+    if (!stream || !pixels || stream->total || stream->failed || stream->pixels) return false;
     stream->pixels = pixels;
     for (unsigned i = 0; i < HQ_PHOTO_WIDTH * HQ_PHOTO_HEIGHT; i++)
         pixels[i] = rgb565(15, 23, 42);
+    return true;
+}
+
+HQ_PngStream *HQ_PngNew(uint16_t *pixels)
+{
+    if (!pixels) return NULL;
+    HQ_PngStream *stream = HQ_PngPrepare();
+    if (!HQ_PngSetPixels(stream, pixels)) { HQ_PngDestroy(stream); return NULL; }
     return stream;
 }
 
 bool HQ_PngFeed(HQ_PngStream *stream, const uint8_t *bytes, size_t length)
 {
-    if (!stream || stream->failed || (!bytes && length)) return false;
+    if (!stream || !stream->pixels || stream->failed || (!bytes && length)) return false;
     if (!length) return true;
     if (length > HQ_PHOTO_MAX_PNG - stream->total) {
         stream->failed = true;
         return false;
     }
     stream->total += length;
-    if (!stream->decoder) {
+    if (!stream->header_verified) {
         size_t take = sizeof(stream->header) - stream->header_length;
         if (take > length) take = length;
         memcpy(stream->header + stream->header_length, bytes, take);
@@ -103,19 +134,12 @@ bool HQ_PngFeed(HQ_PngStream *stream, const uint8_t *bytes, size_t length)
             stream->failed = true;
             return false;
         }
-        stream->decoder = pngle_new();
-        if (!stream->decoder) {
-            stream->failed = true;
-            return false;
-        }
-        pngle_set_user_data(stream->decoder, stream);
-        pngle_set_draw_callback(stream->decoder, draw_pixel);
-        pngle_set_done_callback(stream->decoder, done);
         int fed = pngle_feed(stream->decoder, stream->header, sizeof(stream->header));
         if (fed < 0 || (size_t)fed != sizeof(stream->header)) {
             stream->failed = true;
             return false;
         }
+        stream->header_verified = true;
     }
     while (length) {
         size_t take = sizeof(stream->input) - stream->remaining;

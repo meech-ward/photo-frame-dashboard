@@ -121,10 +121,8 @@ def signin(api, email, password):
 
 
 def native_transport(homehq_root, api, session, household_id=None):
-    repository = homehq_root.parent
-    for path in (repository / "network" / "vendor", repository / "badgelink" / "badge",
-                 repository / "network" / "badge", homehq_root / "badge" / "homehq"):
-        sys.path.insert(0, str(path))
+    from dependencies import add_import_paths
+    add_import_paths(homehq_root.parent)
     source = homehq_root / "badge" / "homehq" / "transport.py"
     spec = importlib.util.spec_from_file_location("homehq_live_transport", source)
     module = importlib.util.module_from_spec(spec)

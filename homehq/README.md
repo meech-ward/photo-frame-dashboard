@@ -13,8 +13,9 @@ household data through Supabase. The implementation uses the
 the upstream source, full video transcript review and original social post.
 
 For another agent, start with the [handoff and porting map](HANDOFF.md): current
-source/output directories, installed devices, private operator-file locations,
-customization routes and the work required for another hardware target.
+source/output directories, customization routes, deployment and the seams for
+another hardware target. The [local operator record](https://github.com/meech-ward/select-badge/blob/main/docs/handoff/homehq-local-2026-10-13.md)
+keeps this machine's paths and per-device installation evidence separate.
 The [native ModRetro Chromatic port](chromatic/README.md) adapts these pages to
 the ESP32/LVGL overlay; its installation and physical acceptance status are
 tracked separately from the badges.
@@ -323,7 +324,7 @@ renderer covers 41 states plus nine countdown glyph controls; four distinct
 hosted member accounts pass fanout and disconnected catch-up. Two physical
 Tuftys have verified installs, with full Auth/recovery/cross-account Realtime
 acceptance recorded on the first and the latest countdown native render on the
-second. See [current device state](HANDOFF.md#current-implementation-and-deployment)
+second. See [current device state](https://github.com/meech-ward/select-badge/blob/main/docs/handoff/homehq-local-2026-10-13.md#current-implementation-and-deployment)
 before selecting a device or deciding which update it needs.
 
 ### Current member login acceptance

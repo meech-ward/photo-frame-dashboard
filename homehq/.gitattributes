@@ -1,0 +1,2 @@
+# Blank unified-diff context lines need their leading space for git apply.
+chromatic/tools/mcu-baseline.patch -whitespace

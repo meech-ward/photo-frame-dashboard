@@ -1,0 +1,17 @@
+{
+  "base_repository": "https://github.com/ModRetro/oss-chromatic-console-mcu",
+  "base_commit": "6c94613da72420f6a364e0024681401bd69184ba",
+  "patch_sha256": "b9d51c28b9d8ee84bfc62e81db129a01f46ff29adb74b1787a033668ce24197b",
+  "base_files": {
+    "components/button/button.c": "fa636adce43a72fe84603a44dc4e6b1d801043ca3faf7ecd05ea9c790829155a",
+    "components/button/button.h": "4507c7dd3dbaf4af8768773d7a38727c11e2f5825fbcdeb3888f5ce10fd6058f",
+    "main/fpga_tx.c": "55addebb8666a9855aae10e0d243cedf60c2773844481820c898997d1d098864",
+    "main/fpga_tx.h": "5f6fcdc50460bb13b75135d38fb2465b586920edafe68a62e15d316462cac8ba",
+    "main/main.c": "a4d03984547ed785ac04d4f56f49e22eee8664b2ffabc7217b61e20fc5f856ea",
+    "main/CMakeLists.txt": "90387f67b54940290f2d509a8b0afd76b0392070fc52d2ec3b1406dac36964a2",
+    "sdkconfig.defaults": "6064d2c2cf6d682f85aca2ff41ed5ef1d5d5252117badbec469ec1d5c591fa39"
+  },
+  "license": "GPL-3.0-only",
+  "license_file": "mcu-baseline-LICENSE",
+  "purpose": "Minimal platform seams for Home HQ: display lifecycle, physical held-button state, FPGA overlay reopening, client-network components and constrained ESP32 defaults."
+}

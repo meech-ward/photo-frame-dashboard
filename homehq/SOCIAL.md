@@ -1,23 +1,31 @@
-# Social demo, after the physical gate
+# Social demo and upstream contribution
 
 Draft quote-post copy:
 
-> @wesbos’s photo-frame Home HQ, shrunk onto a badge 🏡 Calendar, chores, shopping
-> and photos—with buttons and Supabase Realtime. Native MicroPython + a companion
-> editor. Spin up your own project and try it.
-> https://github.com/meech-ward/select-badge/tree/main/homehq
+> @wesbos's photo-frame dashboard, now on a SELECT badge and a ModRetro Chromatic.
+> One family dashboard, separate member logins, and chores/photos synced through
+> Supabase. His original web UI, with native MicroPython and C/LVGL device ports.
+> Code and setup: https://github.com/meech-ward/photo-frame-dashboard/blob/main/HOMEHQ.md
 
-Attach a short physical clip: Today/next event → Calendar → complete
-one chore with the badge → watch it arrive in the companion → Undo in the
-companion → see the badge update → Photos. Keep the household fictional and
-use the original sample artwork. The source link above points to the integrated starter. Give Wes clear credit for the original design.
+Attach a short physical clip: Today/next event → Calendar → complete a chore
+on a badge → see it in the web dashboard and Chromatic → Undo in the editor →
+see the devices update → Photos. Use the fictional sample household and bundled
+sample artwork. Keep real account details, tokens, Wi-Fi settings and personal
+photos out of the clip. Optical footage is distinct from native framebuffer
+captures; label a software render when using one.
 
-Reference [Wes's original post](https://x.com/wesbos/status/2108550413599265045),
-[source](https://github.com/wesbos/photo-frame-dashboard) and
-[video](https://youtu.be/ZLycoUMltNI). The original post and full video transcript were verified; see [reference audit](RESEARCH.md).
+Credit [Wes's original project](https://github.com/wesbos/photo-frame-dashboard),
+[post](https://x.com/wesbos/status/2108550413599265045) and
+[video](https://youtu.be/ZLycoUMltNI). The original post and full video transcript
+were verified; see [the reference audit](RESEARCH.md).
 
-Posting remains pending the successful physical demo and the owner's final
-publication instruction. No social post, message or repost has been sent. The private Home HQ Supabase
-backend is deployed; the companion runs locally. Public website publication
-and an optical physical clip remain pending. Actual badge framebuffer captures
-are available, clearly labelled as such.
+Wes's [Community builds guide](https://github.com/wesbos/photo-frame-dashboard/blob/main/docs/community-builds.md)
+requests a small PR with a build row and a link to the post. After publishing,
+use [CONTRIBUTING.md](CONTRIBUTING.md) to prepare that focused upstream contribution.
+The public fork contains the complete backend and device sources; a community
+row can link it without making the original frame project maintain every port.
+
+No social post, message, repost or upstream PR has been sent. Public website
+hosting, the final optical clip and publication remain separate owner actions.
+The editor can run locally or be built for static hosting using the documented
+Vite environment variables.

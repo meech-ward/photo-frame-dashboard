@@ -1,10 +1,16 @@
 #include "homehq.h"
 #include "homehq_png.h"
+#include "homehq_photo_cache.h"
+#include "homehq_photo_stage.h"
+#include "homehq_photo_range.h"
+#include "homehq_http.h"
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <stdio.h>
 #include <ctype.h>
 #include "esp_http_client.h"
+#include "esp_tls.h"
 #include "esp_crt_bundle.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -21,11 +27,15 @@ static uint16_t *pending_pixels;
 static char pending_path[106];
 static char requested_path[106];
 static unsigned photo_epoch;
+static unsigned completed_epoch;
+static bool epoch_completed;
+static bool worker_busy;
 static bool reset_pending;
 static uint16_t *active_pixels;
 static char active_path[106];
 static bool changed;
 static int64_t retry_at;
+static HQ_PhotoDiagnosticsInfo photo_stats;
 static lv_img_dsc_t active_image = {
     .header = {.cf = LV_IMG_CF_TRUE_COLOR, .always_zero = 0,
                .w = HQ_PHOTO_WIDTH, .h = HQ_PHOTO_HEIGHT},
@@ -91,6 +101,20 @@ const lv_img_dsc_t *HQ_Photo(const cJSON *photo)
     return &homehq_photo_coast;
 }
 
+bool HQ_PhotoIsFallback(const cJSON *photo)
+{
+    const char *path = field(photo, "path");
+    return !active_pixels || !path || strcmp(path, active_path) != 0;
+}
+
+void HQ_PhotoRetireUnused(const cJSON *photo)
+{
+    const char *path = field(photo, "path");
+    /* Called only after deleting the prior image widget. Unlike NULL maintain,
+     * this gives back its 18 KiB without canceling a matching pending result. */
+    if (active_pixels && (!path || strcmp(path, active_path))) release_active();
+}
+
 void HQ_PhotoMaintain(const cJSON *photo)
 {
     const char *path = field(photo, "path");
@@ -109,8 +133,13 @@ void HQ_PhotoMaintain(const cJSON *photo)
         memcpy(requested_path, path, strlen(path) + 1);
         photo_epoch++;
     }
+    bool complete = epoch_completed && completed_epoch == photo_epoch;
+    bool busy = worker_busy;
     portEXIT_CRITICAL(&photo_mutex);
-    if (reset) release_active();
+    /* NULL means the displayed photo widgets have been deleted by LVGL. Give
+     * their 18 KiB back before a larger page projection or its TLS work starts;
+     * changing the requested epoch also cancels an in-flight old download. */
+    if (reset || !photo) release_active();
     if (incoming && !reset && !strcmp(path, incoming_path)) {
         release_active();
         active_pixels = incoming;
@@ -121,7 +150,10 @@ void HQ_PhotoMaintain(const cJSON *photo)
     }
     free(incoming);
     int64_t now = esp_timer_get_time() / 1000;
-    if (!path[0] || (active_pixels && !strcmp(path, active_path))) return;
+    /* An accepted long transfer owns this request until cleanup. Polling its
+     * 30-second retry timer must not enqueue a second same-path operation. */
+    if (!path[0] || complete || (!different && busy) ||
+        (active_pixels && !strcmp(path, active_path))) return;
     if (different || now >= retry_at) {
         /* Retry failures without blocking a button handler. The service owns
          * credentials, home-membership validation and its network work queue. */
@@ -136,12 +168,129 @@ bool HQ_PhotoChanged(void)
     return result;
 }
 
+bool HQ_PhotoWorkerBusy(void)
+{
+    portENTER_CRITICAL(&photo_mutex);
+    bool busy = worker_busy;
+    portEXIT_CRITICAL(&photo_mutex);
+    return busy;
+}
+
+static void worker_finished(void)
+{
+    portENTER_CRITICAL(&photo_mutex);
+    worker_busy = false;
+    portEXIT_CRITICAL(&photo_mutex);
+}
+
+void HQ_PhotoDiagnostics(HQ_PhotoDiagnosticsInfo *result)
+{
+    if (!result) return;
+    portENTER_CRITICAL(&photo_mutex);
+    *result = photo_stats;
+    portEXIT_CRITICAL(&photo_mutex);
+}
+
+bool HQ_PhotoClearCache(void)
+{
+    bool thumbnails = HQ_PhotoCacheDrop();
+    bool staging = HQ_PhotoStageDrop();
+    bool cleared = thumbnails && staging;
+    portENTER_CRITICAL(&photo_mutex);
+    if (!cleared) ++photo_stats.cache_clear_failed;
+    portEXIT_CRITICAL(&photo_mutex);
+    return cleared;
+}
+
+typedef struct { int tls, transport; } PhotoErrors;
+
+typedef struct {
+    PhotoErrors errors;
+    bool invalid, range_seen, etag_seen, encoding_seen, connection_close;
+    char range[80], etag[97];
+} PhotoHeaders;
+
+typedef struct {
+    esp_http_client_handle_t client;
+    PhotoHeaders headers;
+} PhotoSession;
+
+static bool header_token(const char *value, const char *token)
+{
+    size_t length = strlen(token);
+    while (*value) {
+        while (*value == ' ' || *value == '\t' || *value == ',') ++value;
+        const char *end = strchr(value, ',');
+        if (!end) end = value + strlen(value);
+        const char *trimmed = end;
+        while (trimmed > value && (trimmed[-1] == ' ' || trimmed[-1] == '\t')) --trimmed;
+        if ((size_t)(trimmed - value) == length && !strncasecmp(value, token, length)) return true;
+        value = *end ? end + 1 : end;
+    }
+    return false;
+}
+
+static void capture_header(PhotoHeaders *headers, const char *key, const char *value)
+{
+    if (!key || !value) { headers->invalid = true; return; }
+    if (!strcasecmp(key, "Content-Range")) {
+        size_t length = strlen(value);
+        if (headers->range_seen || length >= sizeof(headers->range)) {
+            headers->invalid = true;
+            return;
+        }
+        headers->range_seen = true;
+        memcpy(headers->range, value, length + 1);
+    } else if (!strcasecmp(key, "ETag")) {
+        size_t length = strlen(value);
+        if (headers->etag_seen || length >= sizeof(headers->etag) || !HQ_PhotoETagValid(value)) {
+            headers->invalid = true;
+            return;
+        }
+        headers->etag_seen = true;
+        memcpy(headers->etag, value, length + 1);
+    } else if (!strcasecmp(key, "Content-Encoding")) {
+        if (headers->encoding_seen || strcasecmp(value, "identity")) headers->invalid = true;
+        headers->encoding_seen = true;
+    } else if (!strcasecmp(key, "Connection") && header_token(value, "close")) {
+        headers->connection_close = true;
+    }
+}
+
+static esp_err_t photo_http_event(esp_http_client_event_t *event)
+{
+    if (event->event_id == HTTP_EVENT_ON_HEADER && event->user_data) {
+        capture_header(event->user_data, event->header_key, event->header_value);
+    }
+    if ((event->event_id == HTTP_EVENT_ERROR || event->event_id == HTTP_EVENT_DISCONNECTED) &&
+        event->data && event->user_data) {
+        PhotoErrors *errors = &((PhotoHeaders *)event->user_data)->errors;
+        int tls = 0;
+        int transport = esp_tls_get_and_clear_last_error((esp_tls_error_handle_t)event->data, &tls, NULL);
+        if (tls || transport) { errors->tls = tls; errors->transport = transport; }
+    }
+    return ESP_OK;
+}
+
+static void download_result(bool success, unsigned stage, unsigned http_status, const PhotoErrors *errors)
+{
+    portENTER_CRITICAL(&photo_mutex);
+    if (success) ++photo_stats.download_ok;
+    else ++photo_stats.download_failed;
+    photo_stats.stage = success ? 0 : stage;
+    photo_stats.http_status = http_status;
+    photo_stats.tls_error = errors ? errors->tls : 0;
+    photo_stats.transport_error = errors ? errors->transport : 0;
+    portEXIT_CRITICAL(&photo_mutex);
+}
+
 void HQ_PhotoReset(void)
 {
     /* Logout can race a TLS read. Its epoch cancels publication, and the LVGL
      * task releases the displayed private pixels at its next maintain call. */
     portENTER_CRITICAL(&photo_mutex);
     photo_epoch++;
+    epoch_completed = false;
     requested_path[0] = 0;
     reset_pending = true;
     uint16_t *old_pending = pending_pixels;
@@ -150,79 +299,316 @@ void HQ_PhotoReset(void)
     free(old_pending);
 }
 
-bool HQ_PhotoDownload(const char *url, const char *bearer, const char *apikey)
-{
-    const char *path = url_path(url);
-    if (!path || !bearer || !bearer[0] || !apikey || !apikey[0] ||
-        strlen(bearer) > 8192 || strlen(apikey) > 8192) return false;
-    portENTER_CRITICAL(&photo_mutex);
-    unsigned epoch = photo_epoch;
-    bool wanted = !pending_pixels && !strcmp(path, requested_path);
-    portEXIT_CRITICAL(&photo_mutex);
-    if (!wanted) return false;
+typedef struct {
+    const char *path;
+    unsigned epoch;
+    HQ_PhotoGuard guard;
+    void *context;
+} PhotoRequest;
 
-    uint16_t *pixels = malloc(HQ_PHOTO_BYTES);
-    HQ_PngStream *stream = HQ_PngNew(pixels);
-    char *authorization = calloc(1, strlen(bearer) + 8);
-    esp_http_client_handle_t client = NULL;
-    bool success = false;
-    if (!pixels || !stream || !authorization) goto cleanup;
-    snprintf(authorization, strlen(bearer) + 8, "Bearer %s", bearer);
-    esp_http_client_config_t config = {
-        .url = url,
-        .timeout_ms = 15000,
-        .buffer_size = 2048,
-        .buffer_size_tx = 512,
-        .crt_bundle_attach = esp_crt_bundle_attach,
-        .disable_auto_redirect = true,
-        .keep_alive_enable = false
-    };
-    client = esp_http_client_init(&config);
-    if (!client || esp_http_client_set_header(client, "Authorization", authorization) != ESP_OK ||
-        esp_http_client_set_header(client, "apikey", apikey) != ESP_OK ||
-        esp_http_client_open(client, 0) != ESP_OK) goto cleanup;
-    int64_t length = esp_http_client_fetch_headers(client);
-    if (length < 0 || length > HQ_PHOTO_MAX_PNG ||
-        esp_http_client_get_status_code(client) != 200) goto cleanup;
-    uint8_t input[1024];
-    size_t received = 0;
-    for (;;) {
-        portENTER_CRITICAL(&photo_mutex);
-        wanted = epoch == photo_epoch && !strcmp(path, requested_path);
-        portEXIT_CRITICAL(&photo_mutex);
-        if (!wanted) goto cleanup;
-        int count = esp_http_client_read(client, (char *)input, sizeof(input));
-        if (count < 0) goto cleanup;
-        if (!count) break;
-        received += count;
-        if (received > HQ_PHOTO_MAX_PNG || !HQ_PngFeed(stream, input, count)) goto cleanup;
-    }
-    if ((length > 0 && received != (size_t)length) ||
-        !esp_http_client_is_complete_data_received(client) || !HQ_PngComplete(stream)) goto cleanup;
+static bool request_current(void *context)
+{
+    const PhotoRequest *request = context;
+    /* Account checks take the service guard first; do not hold the photo
+     * critical section while calling it, because logout uses that order. */
+    if (!request->guard(request->context)) return false;
+    portENTER_CRITICAL(&photo_mutex);
+    bool current = request->epoch == photo_epoch && !pending_pixels &&
+                   !strcmp(request->path, requested_path);
+    portEXIT_CRITICAL(&photo_mutex);
+    return current;
+}
+
+static bool request_begin(PhotoRequest *request, const char *path,
+                          HQ_PhotoGuard guard, void *context)
+{
+    if (!guard || !guard(context) || !path_valid(path)) return false;
+    portENTER_CRITICAL(&photo_mutex);
+    request->epoch = photo_epoch;
+    bool current = !pending_pixels && !strcmp(path, requested_path) &&
+                   !(epoch_completed && completed_epoch == photo_epoch);
+    /* The GUI cancels then waits before allocating a larger page projection.
+     * Set busy in this same epoch check so it cannot miss a just-starting job. */
+    if (current) worker_busy = true;
+    portEXIT_CRITICAL(&photo_mutex);
+    request->path = path;
+    request->guard = guard;
+    request->context = context;
+    return current;
+}
+
+static bool publish_pixels(PhotoRequest *request, uint16_t *pixels)
+{
+    if (!request_current(request)) return false;
 #if LV_COLOR_16_SWAP
     for (unsigned i = 0; i < HQ_PHOTO_WIDTH * HQ_PHOTO_HEIGHT; i++)
         pixels[i] = (pixels[i] >> 8) | (pixels[i] << 8);
 #endif
+    if (!request->guard(request->context)) return false;
     portENTER_CRITICAL(&photo_mutex);
-    wanted = epoch == photo_epoch && !strcmp(path, requested_path);
-    uint16_t *old_pending = NULL;
-    if (wanted) {
-        old_pending = pending_pixels;
+    bool current = request->epoch == photo_epoch && !pending_pixels &&
+                   !strcmp(request->path, requested_path);
+    if (current) {
         pending_pixels = pixels;
-        memcpy(pending_path, path, strlen(path) + 1);
-        pixels = NULL;
-        success = true;
+        memcpy(pending_path, request->path, sizeof(pending_path));
+        completed_epoch = request->epoch;
+        epoch_completed = true;
     }
     portEXIT_CRITICAL(&photo_mutex);
-    free(old_pending);
-cleanup:
-    if (client) {
-        esp_http_client_close(client);
-        esp_http_client_cleanup(client);
+    return current;
+}
+
+bool HQ_PhotoRestore(const char *user, const char *path, HQ_PhotoGuard guard, void *context)
+{
+    if (!user || !*user || strlen(user) >= 96) return false;
+    if (!guard || !guard(context) || !path_valid(path)) return false;
+    portENTER_CRITICAL(&photo_mutex);
+    bool ready = epoch_completed && completed_epoch == photo_epoch &&
+                 !strcmp(path, requested_path);
+    portEXIT_CRITICAL(&photo_mutex);
+    /* A 201.9-second physical transfer accumulated a same-path retry. Treat
+     * its published epoch as ready without allocating a second 18 KiB frame;
+     * the worker never reads the LVGL-owned active descriptor or pointer. */
+    if (ready) return true;
+    PhotoRequest request;
+    if (!request_begin(&request, path, guard, context)) return false;
+    uint16_t *pixels = malloc(HQ_PHOTO_BYTES);
+    bool restored = pixels && HQ_PhotoCacheLoad(user, path, pixels, request_current, &request) &&
+                    publish_pixels(&request, pixels);
+    if (!restored) free(pixels);
+    worker_finished();
+    portENTER_CRITICAL(&photo_mutex);
+    if (restored) ++photo_stats.cache_hits;
+    else ++photo_stats.cache_misses;
+    portEXIT_CRITICAL(&photo_mutex);
+    return restored;
+}
+
+static bool decode_staged(PhotoRequest *request, size_t length, uint8_t *dictionary,
+                          size_t capacity, uint16_t **pixels, unsigned *stage)
+{
+    *stage = 7;
+    *pixels = malloc(HQ_PHOTO_BYTES);
+    if (!*pixels) return false;
+    *stage = 2;
+    HQ_PngStream *stream = HQ_PngPrepareWithDictionary(dictionary, capacity);
+    if (!stream) return false;
+    bool decoded = false;
+    *stage = 7;
+    if (!HQ_PngSetPixels(stream, *pixels)) goto done;
+    uint8_t input[1024];
+    for (size_t offset = 0; offset < length;) {
+        size_t count = length - offset;
+        if (count > sizeof(input)) count = sizeof(input);
+        *stage = 16;
+        if (!HQ_PhotoStageRead(offset, input, count, request_current, request)) goto done;
+        *stage = 9;
+        if (!HQ_PngFeed(stream, input, count)) goto done;
+        offset += count;
     }
+    *stage = 9;
+    decoded = HQ_PngComplete(stream) && request_current(request);
+done:
+    HQ_PngDestroy(stream);
+    return decoded;
+}
+
+static void close_photo_session(PhotoSession *session, PhotoErrors *errors)
+{
+    if (session->client) {
+        esp_http_client_close(session->client);
+        esp_http_client_cleanup(session->client);
+        session->client = NULL;
+    }
+    if (errors) *errors = session->headers.errors;
+}
+
+static bool fetch_range(PhotoSession *session, PhotoRequest *request, const char *url, const char *bearer,
+                        const char *apikey, size_t start, size_t end, size_t fixed_total,
+                        const char *etag, char *first_etag, uint8_t *bytes,
+                        size_t *total, size_t *count, unsigned *stage, unsigned *status,
+                        PhotoErrors *errors, bool *retryable)
+{
+    char *authorization = NULL;
+    PhotoHeaders *headers = &session->headers;
+    memset(headers, 0, sizeof(*headers));
+    bool success = false;
+    *retryable = false;
+    *count = 0;
+    *status = 0;
+    if (!session->client) {
+        *stage = 3;
+        authorization = calloc(1, strlen(bearer) + 8);
+        if (!authorization) goto done;
+        snprintf(authorization, strlen(bearer) + 8, "Bearer %s", bearer);
+        /* IDF emits whole header lines. A 970-byte ordinary JWT made TX512 stop
+         * before Authorization/terminator while open() still returned success. */
+        int tx_capacity = HQ_HttpTxSize(bearer, apikey, 8192);
+        if (!tx_capacity) goto done;
+        esp_http_client_config_t config = {
+            .url = url,
+            .timeout_ms = 15000,
+            .buffer_size = 2048,
+            .buffer_size_tx = tx_capacity,
+            .event_handler = photo_http_event,
+            .user_data = headers,
+            .crt_bundle_attach = esp_crt_bundle_attach,
+            .disable_auto_redirect = true,
+            .keep_alive_enable = false
+        };
+        *stage = 4;
+        session->client = esp_http_client_init(&config);
+        if (!session->client || esp_http_client_set_header(session->client, "Authorization", authorization) != ESP_OK ||
+            esp_http_client_set_header(session->client, "apikey", apikey) != ESP_OK ||
+            esp_http_client_set_header(session->client, "Accept-Encoding", "identity") != ESP_OK) goto done;
+        /* set_header copies its value. Release the duplicate before certificate
+         * verification reaches its heap peak; credentials never enter staging. */
+        memset(authorization, 0, strlen(authorization));
+        free(authorization);
+        authorization = NULL;
+    }
+    char range[48];
+    snprintf(range, sizeof(range), "bytes=%u-%u", (unsigned)start, (unsigned)end);
+    *stage = 4;
+    if (esp_http_client_set_header(session->client, "Range", range) != ESP_OK ||
+        (etag && *etag && esp_http_client_set_header(session->client, "If-Match", etag) != ESP_OK)) goto done;
+    /* SDK open()->connect()->prepare() resets the parser/header cursor even on
+     * an existing connection. Keep one fully drained 4 KiB response at a time:
+     * fresh handshakes for all 80 ranges made the physical transfer too slow. */
+    *stage = 11;
+    if (!request_current(request)) goto done;
+    *stage = 5;
+    if (esp_http_client_open(session->client, 0) != ESP_OK) { *retryable = true; goto done; }
+    *stage = 6;
+    int64_t length = esp_http_client_fetch_headers(session->client);
+    int response_status = esp_http_client_get_status_code(session->client);
+    *status = response_status >= 100 && response_status <= 999 ? (unsigned)response_status : 0;
+    if (length < 0 || !*status) { *retryable = true; goto done; }
+    size_t wanted = 0;
+    /* SDK ignores a header callback's return code. Keep a separate invalid bit
+     * so duplicate, oversized, compressed or changed responses fail closed. */
+    if (response_status != 206 || headers->invalid || !headers->range_seen ||
+        !HQ_PhotoRangeParse(headers->range, start, end, fixed_total, total, &wanted) ||
+        (length > 0 && (size_t)length != wanted) ||
+        (etag && ((headers->etag_seen && strcmp(etag, headers->etag)) ||
+                  (!headers->etag_seen && *etag)))) goto done;
+    for (;;) {
+        *stage = 11;
+        if (!request_current(request)) goto done;
+        *stage = 8;
+        /* The permanently borrowed 32 KiB window provides 4 KiB response
+         * scratch plus one overflow byte without another heap/stack buffer. */
+        size_t available = wanted + 1 - *count;
+        int received = esp_http_client_read(session->client, (char *)bytes + *count, (int)available);
+        if (received < 0) { *retryable = true; goto done; }
+        if (!received) break;
+        if ((size_t)received > available) goto done;
+        *count += (size_t)received;
+        if (*count > wanted) goto done;
+    }
+    *stage = 10;
+    if (*count != wanted || !esp_http_client_is_complete_data_received(session->client)) {
+        *retryable = true;
+        goto done;
+    }
+    *stage = 11;
+    if (!request_current(request)) goto done;
+    if (first_etag) memcpy(first_etag, headers->etag, sizeof(headers->etag));
+    success = true;
+done:
+    /* Never reuse a partially consumed/failed response. Its bytes remain in
+     * scratch only; a bounded retry starts the same offset on fresh TLS. */
+    if (!success || headers->connection_close) close_photo_session(session, NULL);
     if (authorization) memset(authorization, 0, strlen(authorization));
     free(authorization);
-    HQ_PngDestroy(stream);
+    *errors = headers->errors;
+    return success;
+}
+
+bool HQ_PhotoDownload(const char *url, const char *bearer, const char *apikey,
+                      const char *user, HQ_PhotoGuard guard, void *context,
+                      uint8_t *dictionary, size_t dictionary_capacity)
+{
+    const char *path = url_path(url);
+    if (!path || !bearer || !bearer[0] || !apikey || !apikey[0] ||
+        strlen(bearer) > 8192 || strlen(apikey) > 8192 ||
+        !user || !*user || strlen(user) >= 96) {
+        download_result(false, 1, 0, NULL);
+        return false;
+    }
+    PhotoRequest request;
+    if (!request_begin(&request, path, guard, context)) {
+        download_result(false, 11, 0, NULL);
+        return false;
+    }
+
+    uint16_t *pixels = NULL;
+    bool transferred = false, staged = false, success = false;
+    size_t staged_bytes = 0, total = 0;
+    unsigned stage = 2, http_status = 0;
+    PhotoErrors errors = {0};
+    PhotoSession session = {0};
+    char etag[97] = {0};
+    /* A physical cache miss left 111 KiB free but a largest block of 31 KiB,
+     * so freeing/reallocating the inactive 32 KiB slot stranded core HTTP.
+     * Borrow that permanent slot for response scratch, then PNG dictionary. */
+    if (!dictionary || dictionary_capacity < 32768u) goto cleanup;
+    /* Even without pixels/decoder, one 320 KiB HTTP transfer failed after
+     * 235,880 bytes on the device; a fresh verified 4 KiB Range request passed.
+     * Bound each response and stage only fully validated bytes. */
+    stage = 13;
+    staged = true;
+    if (!HQ_PhotoStageBegin(request_current, &request)) goto cleanup;
+    for (size_t offset = 0; !total || offset < total;) {
+        size_t end = offset + 4095;
+        if (total && end >= total) end = total - 1;
+        size_t count = 0, received_total = 0;
+        bool fetched = false;
+        for (unsigned attempt = 0; attempt < 2; ++attempt) {
+            bool retryable = false;
+            stage = 11;
+            if (!request_current(&request)) goto cleanup;
+            fetched = fetch_range(&session, &request, url, bearer, apikey, offset, end, total,
+                                  offset ? etag : NULL, offset ? NULL : etag,
+                                  dictionary, &received_total, &count, &stage,
+                                  &http_status, &errors, &retryable);
+            if (fetched || !retryable) break;
+            /* A failed range has never reached flash. Retry once with a fresh
+             * verified client instead of reusing a broken TLS record stream. */
+        }
+        if (!fetched) goto cleanup;
+        total = received_total;
+        /* The exact response is fully drained before each bounded sector
+         * write. An idle retained TLS connection has no body left to stage. */
+        stage = 14;
+        if (!HQ_PhotoStageWrite(dictionary, count, request_current, &request)) goto cleanup;
+        offset += count;
+    }
+    close_photo_session(&session, &errors);
+    stage = 15;
+    if (!HQ_PhotoStageFinish(&staged_bytes, request_current, &request) || staged_bytes != total) goto cleanup;
+    transferred = true;
+cleanup:
+    /* Retained TLS ends before flash readback, destination/context allocation
+     * and decoding; cancellation and every error take this same cleanup path. */
+    close_photo_session(&session, NULL);
+    if (transferred && !request_current(&request)) stage = 11;
+    if (transferred && request_current(&request) &&
+        decode_staged(&request, staged_bytes, dictionary, dictionary_capacity, &pixels, &stage)) {
+        /* TLS and decoder context are gone before CRC/readback and mailbox
+         * transfer. The borrowed dictionary remains permanently service-owned. */
+        bool saved = HQ_PhotoCacheSave(user, path, pixels, request_current, &request);
+        portENTER_CRITICAL(&photo_mutex);
+        if (saved) ++photo_stats.cache_saved;
+        else ++photo_stats.cache_save_failed;
+        portEXIT_CRITICAL(&photo_mutex);
+        stage = 12;
+        success = publish_pixels(&request, pixels);
+        if (success) pixels = NULL;
+    }
+    if (staged) (void)HQ_PhotoStageDrop();
     free(pixels);
+    worker_finished();
+    download_result(success, stage, http_status, &errors);
     return success;
 }

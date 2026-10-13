@@ -15,10 +15,9 @@ import tempfile
 import zlib
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "network" / "vendor"))
-sys.path.insert(0, str(ROOT / "badgelink" / "badge"))
-sys.path.insert(0, str(ROOT / "network" / "badge"))
-sys.path.insert(0, str(ROOT / "homehq" / "badge" / "homehq"))
+sys.path.insert(0, str(ROOT / "homehq/tools"))
+from dependencies import add_import_paths
+add_import_paths(ROOT)
 from transport import HTTP, MAX_BODY, MAX_PHOTO, SupabaseTransport, valid_photo, milliseconds
 
 

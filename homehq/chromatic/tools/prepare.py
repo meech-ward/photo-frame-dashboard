@@ -1,10 +1,33 @@
 #!/usr/bin/env python3
-"""Overlay the native Home HQ port onto an isolated SAM13 MCU worktree."""
+"""Overlay the native Home HQ port onto an isolated MCU checkout."""
 import argparse
+import hashlib
 import json
 import re
 import shutil
+import subprocess
 from pathlib import Path
+
+
+def tls_heap_config(config):
+    # Joined Realtime plus a snapshot HTTPS request drove measured free heap
+    # to 104 bytes. IDF's dynamic records release idle RX/TX storage while
+    # retaining the 16 KiB receive limit needed by ordinary hosted servers.
+    # Verification still completes normally; the peer certificate is then
+    # dispensable. Keep the bundle/config attached for later TLS handshakes.
+    settings = {
+        "MBEDTLS_DYNAMIC_BUFFER": "y",
+        "MBEDTLS_SSL_KEEP_PEER_CERTIFICATE": None,
+        "MBEDTLS_DYNAMIC_FREE_CONFIG_DATA": None,
+        "MBEDTLS_DYNAMIC_FREE_CA_CERT": None,
+    }
+    for symbol, value in settings.items():
+        line = f"CONFIG_{symbol}={value}" if value else f"# CONFIG_{symbol} is not set"
+        pattern = rf"(?m)^(?:CONFIG_{symbol}=.*|# CONFIG_{symbol} is not set)$"
+        config, count = re.subn(pattern, line, config)
+        if not count:
+            config += "\n" + line + "\n"
+    return config
 
 
 def generate(target, home):
@@ -32,6 +55,91 @@ def generate(target, home):
     (target / "homehq_assets.c").write_text("\n".join(lines) + "\n")
 
 
+def stripe_display(text):
+    """Retain the factory OSD protocol with a small synchronous draw buffer."""
+    text = text.replace('#define HQ_DISPLAY_STRIPE_ROWS 8u', '#define HQ_DISPLAY_STRIPE_ROWS 16u')
+    text = text.replace('Eight complete rows\n * reserve 2,560 bytes;', 'Sixteen complete rows\n * reserve 5,120 bytes;')
+    if '#define HQ_DISPLAY_STRIPE_ROWS' not in text:
+        transport = r"""/* Physical HOMEHQ1 left only 44,004 bytes free after startup. Retaining a
+ * 46,080-byte full frame prevents Wi-Fi/TLS from fitting. Sixteen complete rows
+ * reserve 5,120 bytes; the FPGA retains the rest of its own OSD framebuffer. */
+#define HQ_DISPLAY_STRIPE_ROWS 16u
+#define HQ_DISPLAY_STRIPE_PIXELS (kOSD_Width_px * HQ_DISPLAY_STRIPE_ROWS)
+#define HQ_SPI_MAX_BYTES 1024u
+
+static void homehq_rounder_cb(lv_disp_drv_t *drv, lv_area_t *area)
+{
+    (void)drv;
+    /* Every stripe is packed at full width, so its byte address is exactly
+     * y * 320. Row alignment keeps LVGL's partial-buffer chunks predictable. */
+    area->x1 = 0;
+    area->x2 = kOSD_Width_px - 1;
+    if (area->y1 < 0) area->y1 = 0;
+    area->y1 = (area->y1 / HQ_DISPLAY_STRIPE_ROWS) * HQ_DISPLAY_STRIPE_ROWS;
+    area->y2 = ((area->y2 / HQ_DISPLAY_STRIPE_ROWS) + 1) * HQ_DISPLAY_STRIPE_ROWS - 1;
+    if (area->y2 >= kOSD_Height_px) area->y2 = kOSD_Height_px - 1;
+}
+
+static void example_lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_map)
+{
+    const size_t rows = (size_t)(area->y2 - area->y1 + 1);
+    const size_t total = rows * kOSD_Width_px * sizeof(lv_color_t);
+    const uint8_t *pixels = (const uint8_t *)color_map;
+    configASSERT(area->x1 == 0 && area->x2 == kOSD_Width_px - 1);
+    configASSERT(rows <= HQ_DISPLAY_STRIPE_ROWS);
+    for (size_t offset = 0; offset < total; ) {
+        size_t count = total - offset;
+        if (count > HQ_SPI_MAX_BYTES) count = HQ_SPI_MAX_BYTES;
+        spi_transaction_t transaction = {0};
+        transaction.tx_buffer = pixels + offset;
+        transaction.length = count * 8;
+        transaction.flags = SPI_TRANS_MODE_QIO;
+        configASSERT(count == HQ_SPI_MAX_BYTES);
+        transaction.cmd = 0x7ff; /* The factory FPGA OSD path uses fixed 1024-byte bursts. */
+        transaction.addr = (uint32_t)area->y1 * kOSD_Width_px * sizeof(lv_color_t) + offset;
+        /* A single buffer cannot be reused while DMA still reads it. Polling
+         * transmit completes each chunk before its stack descriptor expires. */
+        ESP_ERROR_CHECK(spi_device_polling_transmit(spi, &transaction));
+        offset += count;
+    }
+    lv_disp_flush_ready(drv);
+}
+
+"""
+        text, changed = re.subn(
+            r'// Having some issue with floating point here so scale 9\.6 10x\n.*?(?=static void lvgl_tick\(void \*arg\)\n\{)',
+            lambda _: transport, text, count=1, flags=re.S)
+        if changed != 1:
+            raise SystemExit('Unknown display driver; refuse a partial stripe overlay')
+        text, changed = re.subn(
+            r'static void send_lines\(spi_device_handle_t spi, int ypos, uint16_t \*linedata\)\n\{.*?(?=static void register_update_callbacks\(void\)\n\{)',
+            '', text, count=1, flags=re.S)
+        if changed != 1:
+            raise SystemExit('Expected the factory QSPI sender before replacing its asynchronous buffer')
+        text = text.replace('static void send_lines(spi_device_handle_t spi, int ypos, uint16_t *linedata);\n', '')
+    if 'configASSERT(count == HQ_SPI_MAX_BYTES);' not in text:
+        text = text.replace('        transaction.cmd = 0x7ff; /* The existing 11-bit FPGA OSD write command. */',
+                            '        configASSERT(count == HQ_SPI_MAX_BYTES);\n        transaction.cmd = 0x7ff; /* The factory FPGA OSD path uses fixed 1024-byte bursts. */')
+    text = text.replace('static DMA_ATTR lv_color_t buffy[160*144];', 'static lv_color_t *buffy;')
+    text = text.replace(
+        '/* A static DMA section includes 46,080 zero bytes in the flash image.\n * Allocate once from internal DMA-capable RAM to fit the factory app region. */\nstatic lv_color_t *buffy;',
+        '/* One internal DMA stripe serves every display update; there is no full-frame allocation. */\nstatic lv_color_t *buffy;')
+    text = text.replace('lv_color_t *buf1 = (lv_color_t*)&buffy;',
+                        'buffy = heap_caps_calloc(HQ_DISPLAY_STRIPE_PIXELS, sizeof(lv_color_t), MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);\n    configASSERT(buffy);\n    lv_color_t *buf1 = buffy;')
+    text = text.replace('heap_caps_calloc(160 * 144, sizeof(lv_color_t),', 'heap_caps_calloc(HQ_DISPLAY_STRIPE_PIXELS, sizeof(lv_color_t),')
+    text = text.replace('lv_disp_draw_buf_init(&disp_buf, buf1, NULL, kOSD_NumPixels);',
+                        'lv_disp_draw_buf_init(&disp_buf, buf1, NULL, HQ_DISPLAY_STRIPE_PIXELS);')
+    text = re.sub(r'\.max_transfer_sz\s*=\s*\(BYTESPERXFER\*8\)\+46,', '.max_transfer_sz=HQ_SPI_MAX_BYTES,', text)
+    text = text.replace('.queue_size=NUMTRANS,', '.queue_size=1,')
+    text = text.replace('.post_cb=notify_lvgl_flush_ready', '.post_cb=NULL')
+    text = text.replace('disp_drv.direct_mode = 1;', 'disp_drv.direct_mode = 0;')
+    text = text.replace('disp_drv.full_refresh = 1;', 'disp_drv.full_refresh = 0;')
+    if 'disp_drv.rounder_cb = homehq_rounder_cb;' not in text:
+        text = text.replace('disp_drv.flush_cb = example_lvgl_flush_cb;',
+                            'disp_drv.flush_cb = example_lvgl_flush_cb;\n    disp_drv.rounder_cb = homehq_rounder_cb;')
+    return text
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mcu", required=True, type=Path)
@@ -41,7 +149,22 @@ def main():
     main_c = target / "main/main.c"
     text = main_c.read_text()
     if '#include "boot_screen.h"' not in text and '#include "homehq.h"' not in text:
-        raise SystemExit("Expected the documented SAM13 main.c; refuse an unknown firmware overlay")
+        # The original build depended on an unpublished customized MCU tree.
+        # Apply only the checked platform seams to exact public source files;
+        # an edited or different firmware must never receive a guessed overlay.
+        provenance = json.loads((port / "tools/mcu-baseline.json").read_text())
+        patch = port / "tools/mcu-baseline.patch"
+        if hashlib.sha256(patch.read_bytes()).hexdigest() != provenance["patch_sha256"]:
+            raise SystemExit("Home HQ MCU baseline patch differs from its recorded provenance")
+        for relative, expected in provenance["base_files"].items():
+            source = target / relative
+            if not source.is_file() or hashlib.sha256(source.read_bytes()).hexdigest() != expected:
+                raise SystemExit("Expected pristine public MCU " + provenance["base_commit"] + "; file differs: " + relative)
+        subprocess.run(["git", "apply", "--check", str(patch)], cwd=target, check=True)
+        subprocess.run(["git", "apply", str(patch)], cwd=target, check=True)
+        text = main_c.read_text()
+    if '#include "boot_screen.h"' not in text and '#include "homehq.h"' not in text:
+        raise SystemExit("Expected a Home HQ-compatible MCU entry point; refuse an unknown firmware overlay")
     text = text.replace('#include "boot_screen.h"\n#include "camera_stream.h"', '#include "homehq.h"\n#include "homehq_console.h"')
     text = text.replace('lv_tick_inc(kLVGL_TickPeriod_us);', '// LVGL ticks are milliseconds; the hardware timer period is microseconds.\n    lv_tick_inc(kLVGL_TickPeriod_us / 1000);')
     text = text.replace('Camera_LockDisplay();\n        BootScreen_Maintain();', 'HQ_ConsolePoll();\n        HomeHQ_Maintain();')
@@ -55,6 +178,7 @@ def main():
     text = text.replace('Camera/weather use their own canvas.', 'Home HQ owns the display.')
     text = text.replace('// Copy arriving camera pixels before rendering, avoiding a whole extra\n        // 30 ms loop of latency. Idle weather retains its original cadence.', '// Render on one core while the network worker performs blocking TLS.')
     text = text.replace('// Install the shared canvas mutex before the display task can use it.', '// All Home HQ widget/model changes run in this sole display task.')
+    text = stripe_display(text)
     main_c.write_text(text)
     for source in (port / "src").rglob("*"):
         if source.is_file():
@@ -72,6 +196,10 @@ def main():
     cmake = cmake.replace('mbedtls esp_https_server', 'mbedtls esp_http_client json')
     cmake = cmake.replace('mbedtls esp_http_client json', 'mbedtls esp_http_client json tcp_transport')
     cmake = cmake.replace('tcp_transport tcp_transport', 'tcp_transport')
+    if 'bootloader_support' not in cmake:
+        # The cache refuses encrypted flash; expose that already-linked IDF
+        # header without changing the firmware deployment/partition boundary.
+        cmake = cmake.replace('tcp_transport', 'tcp_transport bootloader_support', 1)
     if 'PNGLE_NO_GAMMA_CORRECTION' not in cmake:
         cmake += '\n# Streamed photos use their stored colour values; avoid a floating-point gamma table.\ntarget_compile_definitions(${COMPONENT_LIB} PRIVATE PNGLE_NO_GAMMA_CORRECTION)\n'
     (target / "main/CMakeLists.txt").write_text(cmake)
@@ -90,6 +218,12 @@ def main():
     # charts/meters/tab views. Home HQ styles its own objects; linking those
     # widgets caused a measured 153,696-byte factory-partition overflow.
     config += '\n# CONFIG_LV_USE_THEME_DEFAULT is not set\n# CONFIG_LV_USE_THEME_BASIC is not set\n# CONFIG_LV_USE_THEME_MONO is not set\nCONFIG_LV_USE_FLEX=y\nCONFIG_LV_USE_GRID=y\n'
+    # Public SNTP alternatives remain enabled when the local network permits
+    # UDP; a trusted USB clock checkpoint handles networks that filter it.
+    config = re.sub(r'(?m)^CONFIG_LWIP_SNTP_MAX_SERVERS=\d+$', 'CONFIG_LWIP_SNTP_MAX_SERVERS=3', config)
+    if 'CONFIG_LWIP_SNTP_MAX_SERVERS=3' not in config:
+        config += '\nCONFIG_LWIP_SNTP_MAX_SERVERS=3\n'
+    config = tls_heap_config(config)
     # Kconfig defaults are sets of values, not an append-only deployment log.
     # Remove repeated identical setting lines left by incremental preparations.
     seen = set()
@@ -100,7 +234,12 @@ def main():
                 continue
             seen.add(line)
         unique.append(line)
-    (target / "sdkconfig.defaults").write_text("\n".join(unique) + "\n")
+    compact = []
+    for line in unique:
+        if not line and (not compact or not compact[-1]):
+            continue
+        compact.append(line)
+    (target / "sdkconfig.defaults").write_text("\n".join(compact).rstrip() + "\n")
     # defaults apply only to unset symbols. Update the existing isolated build
     # config too, so an incremental build cannot retain server TLS/themes.
     existing = target / "sdkconfig"
@@ -112,6 +251,8 @@ def main():
         for symbol in ('LV_USE_FLEX', 'LV_USE_GRID'):
             current = current.replace(f'# CONFIG_{symbol} is not set', f'CONFIG_{symbol}=y')
         current = current.replace('# CONFIG_NEWLIB_NANO_FORMAT is not set', 'CONFIG_NEWLIB_NANO_FORMAT=y')
+        current = re.sub(r'(?m)^CONFIG_LWIP_SNTP_MAX_SERVERS=\d+$', 'CONFIG_LWIP_SNTP_MAX_SERVERS=3', current)
+        current = tls_heap_config(current)
         existing.write_text(current)
     print(f"Prepared isolated Home HQ MCU source: {target}")
 

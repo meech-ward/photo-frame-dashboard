@@ -6,8 +6,9 @@ import sys
 import unittest
 
 REPO = Path(__file__).resolve().parents[2]
-for path in (REPO / "shared", REPO / "identity/badge/identity", REPO / "kbqwerty/badge/kbqwerty", REPO / "homehq/badge/homehq"):
-    sys.path.insert(0, str(path))
+sys.path.insert(0, str(REPO / "homehq/tools"))
+from dependencies import add_import_paths
+add_import_paths(REPO)
 import kbqwerty_board as board
 import identity_keyboard as keyboard
 from login import SignIn, CredentialKeyboard

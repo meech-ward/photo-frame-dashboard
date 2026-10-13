@@ -50,10 +50,44 @@ class DecoderTest(unittest.TestCase):
     def setUpClass(cls):
         cls.directory = tempfile.TemporaryDirectory(prefix="homehq-png-test-")
         library = pathlib.Path(cls.directory.name) / ("decoder.dylib" if sys.platform == "darwin" else "decoder.so")
+        allocator = pathlib.Path(cls.directory.name) / "allocator.c"
+        allocator.write_text("""#undef calloc
+#undef free
+#include <stddef.h>
+#include <stdint.h>
+#include <stdlib.h>
+typedef union { max_align_t alignment; size_t length; } Header;
+static size_t limit, fail_at, calls, live, maximum, first, borrowed_frees;
+static void *borrowed;
+void HQ_TestBorrow(void *pointer) { borrowed=pointer; borrowed_frees=0; }
+size_t HQ_TestBorrowedFrees(void) { return borrowed_frees; }
+void HQ_TestAllocator(size_t max, size_t fail) { limit=max; fail_at=fail; calls=maximum=first=0; }
+size_t HQ_TestLive(void) { return live; }
+size_t HQ_TestCalls(void) { return calls; }
+size_t HQ_TestMaximum(void) { return maximum; }
+size_t HQ_TestFirst(void) { return first; }
+void *HQ_TestCalloc(size_t count, size_t size) {
+    if(size && count>SIZE_MAX/size) return NULL;
+    size_t bytes=count*size;
+    ++calls; if(!first) first=bytes;
+    if(bytes>maximum) maximum=bytes;
+    if((limit && bytes>limit) || calls==fail_at || bytes>SIZE_MAX-sizeof(Header)) return NULL;
+    Header *header=calloc(1,sizeof(*header)+bytes);
+    if(!header) return NULL;
+    header->length=bytes; live+=bytes; return header+1;
+}
+void HQ_TestFree(void *value) {
+    if(!value) return;
+    if(value==borrowed) { ++borrowed_frees; return; }
+    Header *header=(Header *)value-1; live-=header->length; free(header);
+}
+""")
         subprocess.run([
-            "cc", "-std=c99", "-O1", "-Wall", "-Wextra", "-DPNGLE_NO_GAMMA_CORRECTION",
+            "cc", "-std=c11", "-O1", "-Wall", "-Wextra", "-DPNGLE_NO_GAMMA_CORRECTION",
+            "-Dcalloc=HQ_TestCalloc", "-Dfree=HQ_TestFree",
             "-shared", "-fPIC", str(SOURCE / "homehq_png.c"),
             str(SOURCE / "vendor/pngle/pngle.c"), str(SOURCE / "vendor/pngle/miniz.c"),
+            str(allocator),
             "-o", str(library),
         ], check=True)
         cls.decoder = ctypes.CDLL(str(library))
@@ -64,10 +98,29 @@ class DecoderTest(unittest.TestCase):
         cls.decoder.HQ_PngComplete.argtypes = [ctypes.c_void_p]
         cls.decoder.HQ_PngComplete.restype = ctypes.c_bool
         cls.decoder.HQ_PngDestroy.argtypes = [ctypes.c_void_p]
+        cls.decoder.HQ_PngPrepare.restype = ctypes.c_void_p
+        cls.decoder.HQ_PngPrepareWithDictionary.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+        cls.decoder.HQ_PngPrepareWithDictionary.restype = ctypes.c_void_p
+        cls.decoder.HQ_PngSetPixels.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint16)]
+        cls.decoder.HQ_PngSetPixels.restype = ctypes.c_bool
+        cls.decoder.HQ_TestAllocator.argtypes = [ctypes.c_size_t, ctypes.c_size_t]
+        cls.decoder.HQ_TestBorrow.argtypes = [ctypes.c_void_p]
+        for name in ("HQ_TestLive", "HQ_TestCalls", "HQ_TestMaximum", "HQ_TestFirst", "HQ_TestBorrowedFrees"):
+            getattr(cls.decoder, name).restype = ctypes.c_size_t
 
     @classmethod
     def tearDownClass(cls):
         cls.directory.cleanup()
+
+    def setUp(self):
+        self.assertEqual(self.decoder.HQ_TestLive(), 0)
+        self.decoder.HQ_TestAllocator(0, 0)
+        self.decoder.HQ_TestBorrow(None)
+
+    def tearDown(self):
+        self.assertEqual(self.decoder.HQ_TestLive(), 0)
+        self.decoder.HQ_TestAllocator(0, 0)
+        self.decoder.HQ_TestBorrow(None)
 
     def decode(self, data, fragment=1024):
         # Sentinels around the caller-owned output catch a write past the card.
@@ -144,6 +197,89 @@ class DecoderTest(unittest.TestCase):
             with self.subTest(name=name):
                 _, complete, _ = self.decode((assets / f"photo-{name}.png").read_bytes(), 137)
                 self.assertTrue(complete)
+
+    def test_split_decoder_reserves_dictionary_before_fragmented_tls_heap(self):
+        self.decoder.HQ_TestAllocator(32768, 0)
+        stream = self.decoder.HQ_PngPrepare()
+        self.assertTrue(stream, "a 32 KiB largest block must admit the split decoder")
+        self.assertEqual(self.decoder.HQ_TestFirst(), 32768)
+        self.assertEqual(self.decoder.HQ_TestMaximum(), 32768)
+        self.assertEqual(self.decoder.HQ_TestCalls(), 3)
+        storage = (ctypes.c_uint16 * (WIDTH * HEIGHT))()
+        try:
+            self.assertFalse(self.decoder.HQ_PngFeed(stream, b"x", 1))
+            self.assertTrue(self.decoder.HQ_PngSetPixels(stream, storage))
+            self.assertFalse(self.decoder.HQ_PngSetPixels(stream, storage))
+            # Once TLS and destination allocation have fragmented the heap,
+            # validated PNG processing must need only bounded small scanlines.
+            self.decoder.HQ_TestAllocator(12000, 0)
+            data = make_png(6)
+            for pos in range(0, len(data), 137):
+                part = data[pos:pos + 137]
+                self.assertTrue(self.decoder.HQ_PngFeed(stream, part, len(part)))
+            self.assertTrue(self.decoder.HQ_PngComplete(stream))
+            self.assertLessEqual(self.decoder.HQ_TestMaximum(), 1288)
+            self.assert_samples(6, list(storage))
+        finally:
+            self.decoder.HQ_PngDestroy(stream)
+
+    def test_prepared_allocation_failures_release_every_partial_buffer(self):
+        for failing in (1, 2, 3):
+            with self.subTest(allocation=failing):
+                self.decoder.HQ_TestAllocator(32768, failing)
+                self.assertFalse(self.decoder.HQ_PngPrepare())
+                self.assertEqual(self.decoder.HQ_TestLive(), 0)
+        self.decoder.HQ_TestAllocator(32768, 0)
+        stream = self.decoder.HQ_PngPrepare()
+        self.assertTrue(stream)
+        storage = (ctypes.c_uint16 * (WIDTH * HEIGHT))()
+        try:
+            self.assertTrue(self.decoder.HQ_PngSetPixels(stream, storage))
+            self.decoder.HQ_TestAllocator(1, 0)
+            data = make_png()
+            self.assertFalse(self.decoder.HQ_PngFeed(stream, data, len(data)))
+            self.assertFalse(self.decoder.HQ_PngComplete(stream))
+        finally:
+            self.decoder.HQ_PngDestroy(stream)
+
+    def test_borrowed_dictionary_needs_only_small_blocks_and_remains_caller_owned(self):
+        storage = (ctypes.c_uint8 * (32768 + 32))()
+        for i in range(len(storage)): storage[i] = 0xA5
+        dictionary = ctypes.cast(ctypes.byref(storage, 16), ctypes.c_void_p)
+        self.decoder.HQ_TestBorrow(dictionary)
+        self.decoder.HQ_TestAllocator(12000, 0)
+        for capacity in (0, 32767):
+            self.assertFalse(self.decoder.HQ_PngPrepareWithDictionary(dictionary, capacity))
+        self.assertFalse(self.decoder.HQ_PngPrepareWithDictionary(None, 32768))
+        self.assertEqual(self.decoder.HQ_TestCalls(), 0)
+        for failing in (1, 2):
+            self.decoder.HQ_TestAllocator(12000, failing)
+            self.assertFalse(self.decoder.HQ_PngPrepareWithDictionary(dictionary, 32768))
+            self.assertEqual(self.decoder.HQ_TestLive(), 0)
+            self.assertEqual(self.decoder.HQ_TestBorrowedFrees(), 0)
+        self.decoder.HQ_TestAllocator(12000, 0)
+        stream = self.decoder.HQ_PngPrepareWithDictionary(dictionary, 32768)
+        self.assertTrue(stream)
+        pixels = (ctypes.c_uint16 * (WIDTH * HEIGHT))()
+        try:
+            self.assertEqual(self.decoder.HQ_TestCalls(), 2)
+            self.assertLessEqual(self.decoder.HQ_TestMaximum(), 12000)
+            self.assertTrue(self.decoder.HQ_PngSetPixels(stream, pixels))
+            data = make_png(6)
+            for pos in range(0, len(data), 193):
+                part = data[pos:pos + 193]
+                self.assertTrue(self.decoder.HQ_PngFeed(stream, part, len(part)))
+            self.assertTrue(self.decoder.HQ_PngComplete(stream))
+            self.assert_samples(6, list(pixels))
+        finally:
+            self.decoder.HQ_PngDestroy(stream)
+        self.assertEqual(self.decoder.HQ_TestBorrowedFrees(), 0)
+        self.assertEqual(list(storage[:16]), [0xA5] * 16)
+        self.assertEqual(list(storage[-16:]), [0xA5] * 16)
+        # A destroyed decoder cannot reclaim or keep a lifetime claim on this
+        # buffer: the service can immediately reuse the same slot for JSON.
+        ctypes.memset(dictionary, 0x5A, 32768)
+        self.assertEqual(storage[16], 0x5A)
 
 
 if __name__ == "__main__":

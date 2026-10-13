@@ -1,214 +1,134 @@
-# Home HQ agent handoff
+# Home HQ source and porting map
 
-Current state: **2026-10-12**. Start here to customize the demo, deploy another
-household or plan a port. Read repository `AGENTS.md` and the
-[development map](https://github.com/meech-ward/select-badge/blob/main/docs/development.md) before editing. The current request
-defines the work; deployment history does not authorize new device/cloud actions.
-
-## Get the current source
-
-Canonical repository: [meech-ward/select-badge](https://github.com/meech-ward/select-badge),
-**`origin/main`, directory `homehq/`**. The persistent local `main` mirror can
-lag while unrelated user files are present. Use an isolated worktree from
-freshly fetched `origin/main`, not that mirror:
-
-```sh
-git -C /Users/supa-sam/Projects/badge fetch --prune origin
-git -C /Users/supa-sam/Projects/badge worktree add \
-  /private/tmp/homehq-next-task -b codex/homehq-next-task origin/main
-cd /private/tmp/homehq-next-task
-```
-
-Choose a fresh path/name if those exist. Follow the
-[integration workflow](https://github.com/meech-ward/select-badge/blob/main/docs/agent-git-workflow.md). Completed work is on
-`main`; finished task worktrees have been removed. The primary checkout's
-unrelated root `supabase/` directory is not this app's backend.
+Start with the [public quickstart](https://github.com/meech-ward/photo-frame-dashboard/blob/main/HOMEHQ.md).
+This fork preserves Wes Bos's original photo-frame project and keeps its
+Supabase integration and native device ports under `homehq/`. A fresh clone is
+sufficient for the web/backend source and Tufty application build; Chromatic
+uses a separate pinned public MCU checkout and ESP-IDF workspace.
 
 ## Source map
 
-Paths are relative to the repository or extracted starter root.
-
-| Purpose | Canonical path |
+| Purpose | Source |
 | --- | --- |
-| Overview, buttons and account setup | [homehq/README.md](README.md) |
-| Household identity, wire format, RPCs and Realtime | [homehq/CONTRACT.md](CONTRACT.md) |
-| Pure interaction, navigation and time model | [homehq/badge/homehq/model.py](badge/homehq/model.py) |
-| Native typography, icons and photo drawing | [homehq/badge/homehq/view.py](badge/homehq/view.py) |
-| Badgeware entry, lifecycle and button dispatch | [homehq/badge/homehq/__init__.py](badge/homehq/__init__.py) |
-| Native credentials form and keyboard | [homehq/badge/homehq/login.py](badge/homehq/login.py) |
-| Snapshot, desired-value queue, identity/cache and photo orchestration | [homehq/badge/homehq/service.py](badge/homehq/service.py), [cache.py](badge/homehq/cache.py) |
-| Badge cooperative HTTP/TLS/WebSocket/Wi-Fi engine | [homehq/badge/homehq/transport.py](badge/homehq/transport.py) |
-| Modern Auth API subset and refresh-only records | [homehq/badge/homehq/auth_client.py](badge/homehq/auth_client.py) |
-| Browser UI and standard supabase-js client | [homehq/web/](web/README.md): `upstream/` (original display), `src/upstream.ts`/`upstream-data.ts` (adapter), `src/main.ts`/`style.css` (editor), `backend.ts` (shared client) |
-| Backend setup and permissions | [homehq/backend-README.md](backend-README.md) |
-| Auth/Storage/local-runtime configuration | [homehq/supabase/config.toml](supabase/config.toml) |
-| Authored SQL / applied forward migrations | `homehq/supabase/schemas/` / `homehq/supabase/migrations/` |
-| Authored sample data / projection checker | [homehq/fixtures/demo.json](fixtures/demo.json), [tools/sync_demo.py](tools/sync_demo.py) |
-| Build, export and private configuration | [homehq/BUILD.md](BUILD.md), `homehq/tools/build.py`, `export.py`, `configure.py` |
-| Unit, SQL, browser, wire and native-render checks | `homehq/tests/`, `homehq/supabase/tests/`, `homehq/web/tests/`, `homehq/tools/` |
-| Wes source, full video/transcript review, social draft | [homehq/RESEARCH.md](RESEARCH.md), [SOCIAL.md](SOCIAL.md) |
-| Measurements, failed assumptions and deployment deviations | [Home HQ evidence](https://github.com/meech-ward/select-badge/blob/main/benchmark/results/reports/2026-10-11-homehq-local.md) |
+| Original Wes dashboard and Android frame tools (public fork) | Root `dashboard/`, `docs/`, `scripts/` |
+| Reused, pinned original frontend | `homehq/web/upstream/`, [UPSTREAM.md](web/UPSTREAM.md) |
+| Dashboard adapter and household editor | `homehq/web/src/upstream.ts`, `upstream-data.ts`, `main.ts`, `backend.ts` |
+| Shared household and device contract | [CONTRACT.md](CONTRACT.md) |
+| Auth, private Realtime/Storage and database permissions | [backend guide](backend-README.md), `homehq/supabase/config.toml`, `schemas/`, `migrations/` |
+| Authored sample data and projections | `homehq/fixtures/demo.json`, `tools/sync_demo.py` |
+| Tufty native layout and interaction | `homehq/badge/homehq/view.py`, `model.py`, `login.py` |
+| Tufty sync, persistence and cooperative networking | `service.py`, `cache.py`, `transport.py`, `auth_client.py` in that app |
+| Tufty's minimal generic dependencies | `homehq/vendor/tufty/` in this fork; [provenance](https://github.com/meech-ward/photo-frame-dashboard/blob/main/homehq/vendor/tufty/provenance.json) |
+| Native Chromatic app and platform patch | `homehq/chromatic/src/`, `tools/prepare.py`, [Chromatic guide](chromatic/README.md) |
+| Source build, export and private provisioning | [BUILD.md](BUILD.md), `homehq/tools/build.py`, `export.py`, `configure.py` |
+| Focused checks | `homehq/tests/`, `supabase/tests/`, `web/tests/`, `chromatic/tests/`, `tools/` |
+| Attribution, reference research and contribution draft | [RESEARCH.md](RESEARCH.md), [CONTRIBUTING.md](CONTRIBUTING.md), [SOCIAL.md](SOCIAL.md) |
 
-## Local outputs and private state
+The web app is Vite with TypeScript and standard supabase-js. Wes's original
+frontend is reused unchanged; a small adapter feeds it the household snapshot
+and handles its supported writes. The editor provides accounts, metadata edits
+and uploads. Native layouts are separate MicroPython/picovector and C/LVGL
+implementations adapted to each display and its buttons.
 
-| Location on this machine | Contents |
+The maintained SELECT-side source is
+[meech-ward/select-badge/homehq](https://github.com/meech-ward/select-badge/tree/main/homehq).
+This public fork records mirrored source revisions in `homehq/fork-source.json`.
+The generic Tufty dependency copies are byte-identical to their recorded source
+revision. In SELECT, the builder prefers their canonical shared paths; in this
+fork, it uses the small vendored dependency set. Do not import the conference's
+fleet apps, admin backend or credentials into Home HQ.
+
+## Generated output and private state
+
+| Path | Contents |
 | --- | --- |
-| `/Users/supa-sam/Projects/badge/build/homehq-demo/` | Extracted public starter; public export, not the canonical development checkout |
-| `/Users/supa-sam/Projects/badge/build/homehq-private-20261012/` | Ignored operator metadata, `member-logins.private.txt`, device backups and result records |
-| `/Users/supa-sam/.codex/visualizations/2026/10/11/01a12c4b-20d5-7002-a4fb-92885219daab/` | `homehq-starter.zip`, `homehq-delivery.json`, render/native evidence |
+| `homehq/web/dist/` | Static web build; configure public Vite variables before building |
+| `homehq/build/standalone/` | Tufty source/bytecode plus its build manifest |
+| `homehq/artifacts/` | Optional exported starter ZIP |
+| `homehq/build/private/` | Private provisioning output; project config and independent device sessions |
+| `homehq/.tools/`, `.supabase-home/`, `.local.private.json` | Ignored local CLI/runtime metadata |
+| Device `/state/` | Tufty Wi-Fi/project config, refresh-only Auth record, snapshot/outbox and photo slots |
+| Separate Chromatic build/programming workspace | MCU dependency, ESP-IDF tools, generated firmware and private provisioning |
 
-Edit canonical source and regenerate these outputs. Passwords, Wi-Fi details
-and sessions must not be printed, committed or exported. Private temporary
-controllers are not required source dependencies; the checked-in guides/probes
-describe reproducible behavior. Never blindly restore an old rotating refresh
-token from a backup.
+Edit source and regenerate output. No populated environment file, Wi-Fi password,
+refresh token, personal photo, device dump or existing user's state belongs in a
+public commit or export. Never restore another device's rotating refresh token.
+Public URL/publishable-key configuration is separate from the ordinary Auth
+session each browser/device obtains by signing in.
 
-## Current implementation and deployment
+## Change or deploy this project
 
-Home HQ is a separate personal demo with seven native 320×240 pages, an editor,
-ordinary email/password Auth, one shared household with linked members, private
-Realtime/Storage, versioned checklist writes and server-stamped creator/completer
-identities. Weather, appliances and agent meters remain labelled samples. No real
-provider integration or social post has been published. Stable badge 1.0.3 and
-its six production tiles remain unchanged; Home HQ is an extra development tile.
+For your own project, follow the
+[fresh Supabase deployment guide](backend-README.md#deploy-to-your-own-supabase-project),
+[web setup](web/README.md), [Tufty install](BUILD.md#app-only-install) or
+[Chromatic build/install](chromatic/README.md). Each device uses the same household
+backend and its own login. The owner creates/links member logins in the editor.
+The exact-target hosted operator helper is for the original demo operator;
+it is not the deployment path for someone else's project.
 
-The modern interface reference is
-[meech-ward/supabase-micro](https://github.com/meech-ward/supabase-micro), checked
-at `aa30dc4e16a7ee7afc31b305b4011c4b4e87dc6c`. The badge keeps its own cooperative
-network engine and matches only Home HQ's required Auth/RPC methods. It does not
-vendor or implement the entire public SDK. Browser clients use normal supabase-js.
+Change Tufty appearance in `view.py`, interaction in `model.py`, and sign-in in
+`login.py`. Keep networking out of drawing/input. Change browser integration in
+`upstream.ts`, `upstream-data.ts` and `upstream.css`, or the editor in `main.ts` and
+`style.css`. Check [UPSTREAM.md](web/UPSTREAM.md) before changing the pinned
+original frontend. Shared Tufty modules are vendored dependencies with recorded
+provenance; update them through their maintained source and refresh the allowlist.
 
-The hosted demo is **Home HQ**, project `cicgysjddsjsbgofpxwr`, in **DevRel Free**
-organization `yuueonycfgiwijatkqyv`, independently of BadgeLink and DevRel Pro.
-Household `511eb57d-7662-45e6-a897-897961498ddc` has four distinct Auth identities.
-Stable person IDs/labels are Wes=`alex`, Claudia=`jordan`, Buzzsaw=`maya`,
-Skidmark=`otto`; names are labels, not the authorization key.
+Change authored examples in `fixtures/demo.json`, run `tools/sync_demo.py`, then
+follow the declarative migration workflow. Applied migrations are immutable;
+generate a new forward migration for a schema change. Live household edits
+belong in the editor. A reset/reseed replaces data and is a deliberate local-demo
+operation, not routine deployment.
 
-At the owner's request, existing demo accounts were renamed and given one easy
-eight-letter password through the server-only Auth admin API. All four fresh
-password sign-ins and authorized household snapshots passed; UUIDs, membership
-and history were preserved. Emails are `wes@home.test`, `claudia@home.test`,
-`buzz@home.test`, `skid@home.test`. Credentials are in the private login sheet
-and operator JSON, omitted from public guides/exports. The temporary privileged
-key stayed in operator memory, never on a
-device/browser or in a saved file. Badge flash retains only refresh token/user ID,
-not a password or access JWT. Every device/browser owns a separate Auth session.
-Clients use a project publishable key plus ordinary Auth; no custom device JWT
-is minted. Local sign-out affects that device's session, not the other members.
+## Current behavior and limits
 
-The companion at `http://127.0.0.1:5191/` uses Wes’s original dashboard.
-The retained household editor/account/upload UI is at `/editor.html`.
-Current development source is `/Users/supa-sam/Projects/badge-homehq/homehq/web`;
-the public starter also carries the same frontend. It is a local server, not a public deployment or a guaranteed service
-after restart. Its ignored `.env.local` supplies `VITE_SUPABASE_URL` and
-`VITE_SUPABASE_PUBLISHABLE_KEY`; these are the only browser project configuration.
-The account form asks only for email/password, and legacy browser connection
-settings are ignored. Restart using
-the [companion helper](web/README.md#run-against-your-hosted-project) with existing
-public-key configuration supplied privately; never copy a browser Auth token.
+All targets share ordinary email/password Auth, one household, private Realtime,
+Storage photos and server-recorded action identity. Today shows the family;
+Chores starts on the signed-in member. Versioned desired-value writes prevent
+retries from toggling a checkbox twice. Refresh tokens are durable, passwords
+are transient, and access tokens remain in memory on native devices.
 
-To restart the dashboard/editor using its saved configuration/dependencies:
+Uploaded photos have a PNG `path` and optional `jpeg_path`. The browser prepares
+both 320×240 variants. Tufty prefers baseline JPEG and retains PNG compatibility;
+Chromatic uses its streaming PNG decoder. Use the contract rather than assuming
+a file extension or copying another target's cache implementation.
 
-```sh
-cd /Users/supa-sam/Projects/badge-homehq/homehq/web
-npm run dev -- --host 127.0.0.1 --port 5191 --strictPort
-```
+The original mock household supplies the names and examples. Native calendar
+views use a bounded seven-day snapshot. Weather, appliance controls and agent
+meters are visibly labelled samples. Bundled illustrations are sample art,
+not photographs of Wes's family. No real appliance/provider integration is
+included.
 
-If that port is already serving this dashboard, reuse it. For a clean installation
-or another project, follow `web/README.md` and install from its lockfile.
+Tufty and Chromatic have recorded native live/reconnect/photo acceptance; their
+platform guides link the dated evidence and remaining measurements. A successful
+build or install is not evidence of battery endurance, abrupt power-loss safety,
+all-device radio behavior or another firmware/hardware combination. Home HQ is
+an additional development app and does not change the stable SELECT badge roster.
 
-| Device | Recorded acceptance / latest state |
-| --- | --- |
-| Tufty `6d9430717fc47ddf` | Full earlier native Auth/rotation/recovery, private photo/storage and cross-account Realtime acceptance; member run used Claudia. Latest countdown `view.mpy` is now installed and native75/MIN pixels match the other board exactly. All196 other system/state hashes matched. It had no saved session/cache before this update and was handed back at normal sign-in. |
-| Tufty `03bfbc20532aa948` | JPEG app checkpoint `9f96ad4b` installed 2026-10-13; all 30 app hashes match, 189 unrelated system files unchanged. Existing login/config preserved. Two real JPEGs download once and render natively; both survive restart and render offline with zero downloads. Normal interactive handback is tracked in [photo evidence](https://github.com/meech-ward/select-badge/blob/main/benchmark/results/reports/2026-10-12-homehq-photo-recovery.md#connected-tufty-jpeg-acceptance-2026-10-13). |
-| Pico `e7e7d70437b93611` | Explicitly excluded; never opened or modified. |
+## Port to another device
 
-Both Tuftys use `bw-1.29.0-gc` (2026-09-22), `_mpy=7942`. Firmware was not
-flashed and storage was not formatted. USB port names can move: select by actual
-USB/native identity. The published physical probes deliberately guard the first
-UID/runtime; adapt a target only after explicitly selecting another board.
+The backend, web app and contract are independent of hardware. A browser-capable
+display can run the existing web app at a reachable hosted URL. Laptop loopback
+is not a URL another device can use; follow the web guide for hosting/Auth origins.
+Kiosk input and display behavior still require their own acceptance.
 
-The [dated evidence](https://github.com/meech-ward/select-badge/blob/main/benchmark/results/reports/2026-10-11-homehq-local.md)
-records corrections for native `str.isalnum`, WebSocket idle/recovery, photo
-bounds, readonly-FAT installation and cropped `75`. Latest checks include 156
-host tests, 121 SQL assertions, 49 local wire assertions, 19 companion browser
-cases, 41 compiled screen states and nine countdown glyph controls. Four distinct
-hosted accounts passed fanout/reconnect; this is not four physical boards or a
-concurrent two-board acceptance test. Battery/power-loss guarantees, four-board
-radio behavior and other hardware ports remain unverified. Native TLS connection
-work can pause an update around 0.8 s. Limits and failed results remain in the report.
+For a native port, reuse `CONTRACT.md` and the pure household model. Replace the
+Badgeware lifecycle/injected globals, display/font renderer and button mapping.
+Choose explicit framebuffer, decoded-photo and persistent-cache limits for the
+new device. Preserve account-separated cache/outbox, desired-value writes,
+Auth refresh rotation, private changed hints and authoritative refresh on join.
 
-## Customization and deployment routes
+The Tufty transport owns MicroPython WLAN, TLS and a cooperatively pumped async
+loop. Its required Auth/RPC interface follows
+[meech-ward/supabase-micro](https://github.com/meech-ward/supabase-micro) at
+`aa30dc4e16a7ee7afc31b305b4011c4b4e87dc6c`; it is a specialized implementation,
+not the complete public SDK. Adapt networking, monotonic time, UTC, loop ownership
+and storage semantics explicitly. A normal Pico can use the public SDK's
+supported interface; the badge's measured behavior does not transfer to a
+replacement client automatically.
 
-Change native appearance in `view.py`, interaction in `model.py`, and browser
-additions in `web/src/upstream.ts`/`upstream.css`; `web/src/style.css`/`main.ts`
-own the retained editor. `web/upstream/` is pinned original source: see
-[UPSTREAM.md](web/UPSTREAM.md) before changing it. Keep network work out of drawing and
-input. App-local `ui.py` is generated from `shared/ui.py`; edit shared source only
-for a shared change, following the repository sync rules.
-
-Edit `fixtures/demo.json` for authored samples, then run `tools/sync_demo.py`
-and follow the [declarative workflow](backend-README.md#declarative-changes).
-Live family edits belong in the configured companion. Reset/reseed deliberately
-replaces sample data; it is not routine deployment. Applied migrations are
-immutable; generate a new forward migration for a schema change.
-
-For another account/project, follow the ordinary
-[fresh-project guide](backend-README.md#deploy-to-your-own-supabase-project),
-[editor guide](web/README.md) and [badge install recipe](BUILD.md#app-only-install-from-the-public-starter).
-`tools/hosted.py` is an exact-target Free DevRel operator helper, not a general
-project selector. Create/link the owner and member accounts in the new editor;
-each device signs in separately with project URL/public-key configuration.
-
-The app folder alone is not the full dependency set. `tools/build.py` collects
-shared UI/keyboard, generic aiohttp/Realtime/backoff, verified TLS roots and fonts
-from elsewhere in the repository. The public starter includes these sources plus
-`badge/source/homehq/`, `badge/mpy/homehq/` and its manifest. Use compatible
-compiler/firmware. Follow each surface's focused checks; documentation-only work
-needs link/Git checks, not builds, live services or devices.
-
-## Porting to another device
-
-The backend, wire contract and web companion are device-independent. The shortest
-browser-capable route is the existing companion in that device's browser/kiosk.
-Configure reachable hosting and Auth origins using the guides above; laptop
-loopback5191 is not a remote-device URL. Kiosk-specific display/input behavior
-still needs its own acceptance.
-
-For a native port, reuse `CONTRACT.md` and pure `model.py`. Replace `__init__.py`'s
-Badgeware lifecycle/injected globals, `view.py`/`SignInView`'s hardcoded 320×240
-picovector/fonts, and A/B/C/UP/DOWN input with the target's display/runtime/input.
-Choose framebuffer, photo and decoded-memory budgets for the new hardware.
-Uploaded photo descriptors now carry a PNG `path` and optional `jpeg_path`.
-Tufty prefers the baseline JPEG; the Chromatic retains the streaming PNG path.
-Use the [photo contract](CONTRACT.md) when adding another device instead of
-assuming a filename extension or copying a device-specific cache implementation.
-The JPEG update and hosted variants are verified. Tufty `03bfbc20532aa948` now
-has the update and passes live photo/restart acceptance. Tufty
-`6d9430717fc47ddf` still needs installation when reconnected. Preserve its login,
-Wi-Fi and unrelated state.
-
-`Service` accepts an injected transport and configurable `state_root`. Preserve
-snapshot/status/command/poll, desired-value conflicts/retries, account-separated
-cache/outbox and saving rotated refresh tokens before further RPC work.
-`cache.py` assumes JSON, writable storage and same-directory temp-file rename;
-verify those semantics on the target.
-
-The badge transport depends on MicroPython WLAN, custom aiohttp connection hooks,
-verified TLS, the Realtime client and an asyncio loop pumped with
-`run_until_complete`. Adapt WLAN, sockets/TLS, wrapping monotonic timers, UTC/epoch,
-loop ownership and persistence deliberately. A running async application needs
-appropriate loop integration. On a normal Pico, the modern public SDK defines the
-API reference; choose a supported client and retain the required Auth/RPC shapes.
-Do not claim the badge's measured recovery/timing behavior for a different client.
-
-Test the new target's login, refresh/rotation/restart, local logout/identity
-clearing, authorized snapshots, private changed hints/rejoin/catch-up, write
-retry/conflict behavior and photo storage/decode bounds. The supplied `.mpy`
-payload requires compatible bytecode/small-integer settings **and** Badgeware
-graphics; copying it to another board is not a native port. The
-[native Chromatic MCU port](chromatic/README.md) now implements the seven pages,
-ordinary sign-in, household sync and target-specific caching/photos in C/LVGL.
-Its host checks pass and the image fits the original app partition; installation
-and physical acceptance are still pending. Its RAM-only downloaded photos and
-smaller NVS cache budget are deliberate target limits, not badge measurements.
+Test the new target's login, refresh/restart, local logout/identity clearing,
+authorized snapshots, private Realtime reconnect/catch-up, retry/conflict writes
+and photo storage/decode limits. Compatible bytecode is only one requirement:
+copying the Tufty `.mpy` payload to another board does not supply Badgeware
+or create a native port. Chromatic's existing C/LVGL port is a concrete example
+of replacing those seams while retaining the household backend.

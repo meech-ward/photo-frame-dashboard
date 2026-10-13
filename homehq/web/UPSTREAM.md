@@ -90,7 +90,7 @@ failed server write cannot appear as a successful local edit.
 event creation, deletion/cleanup, account setup and photo uploads. The original
 Calendar's add action routes to that editor rather than creating a local-only
 event. Shopping cleanup also routes there. Photo files use the private
-`homehq-photos` bucket; the editor prepares a 320×240 PNG and registers its
+`homehq-photos` bucket; the editor prepares 320×240 JPEG and PNG variants and registers their
 metadata. A Storage object alone is not a photo-list entry.
 
 Upstream is a prototype with broader example data than this backend: weather

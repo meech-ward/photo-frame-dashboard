@@ -4,10 +4,14 @@
 typedef int esp_err_t;
 #define ESP_OK 0
 typedef struct mock_http *esp_http_client_handle_t;
+enum {HTTP_EVENT_ERROR, HTTP_EVENT_DISCONNECTED, HTTP_EVENT_ON_HEADER};
+typedef struct {int event_id; void *data, *user_data; const char *header_key, *header_value;} esp_http_client_event_t;
 typedef struct {
     const char *url;
     int timeout_ms, buffer_size, buffer_size_tx;
     esp_err_t (*crt_bundle_attach)(void *configuration);
+    esp_err_t (*event_handler)(esp_http_client_event_t *event);
+    void *user_data;
     bool disable_auto_redirect, keep_alive_enable;
 } esp_http_client_config_t;
 esp_http_client_handle_t esp_http_client_init(const esp_http_client_config_t *configuration);

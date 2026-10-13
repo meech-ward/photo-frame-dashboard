@@ -7,5 +7,7 @@ typedef struct {
     const uint8_t *data;
 } lv_img_dsc_t;
 #define LV_IMG_CF_TRUE_COLOR 4
+#ifndef LV_COLOR_16_SWAP
 #define LV_COLOR_16_SWAP 0
+#endif
 void lv_img_cache_invalidate_src(const void *source);

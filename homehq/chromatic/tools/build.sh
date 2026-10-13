@@ -6,8 +6,9 @@ if [[ $# != 2 ]]; then
 fi
 task_mcu=$(cd "$1" && pwd)
 task_workspace=$(cd "$2" && pwd)
-export IDF_TOOLS_PATH="$task_workspace/idf-tools"
-export PATH="/Users/supa-sam/.local/share/uv/python/cpython-3.11-macos-aarch64-none/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
+export IDF_TOOLS_PATH="${IDF_TOOLS_PATH:-$task_workspace/idf-tools}"
+# ESP-IDF activates its own Python environment and compiler paths. A developer's
+# Mac-specific interpreter path prevented the same source building elsewhere.
 source "$task_workspace/esp-idf/export.sh"
 cd "$task_mcu"
 idf.py build

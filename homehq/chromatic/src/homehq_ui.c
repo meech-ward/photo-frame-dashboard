@@ -13,6 +13,10 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <time.h>
+#ifdef ESP_PLATFORM
+#include "esp_heap_caps.h"
+#include "esp_system.h"
+#endif
 
 #define W 160
 #define H 144
@@ -42,7 +46,25 @@ static int page, detail, routine = 1, detail_scroll;
 static char person_id[ID_SIZE], event_id[ID_SIZE], device_id[ID_SIZE], agent_id[ID_SIZE], pending_chore[ID_SIZE];
 static char notice[96], status_text[64];
 static unsigned pending;
-static bool dirty = true, playing = true, select_was_down;
+static bool dirty = true, playing = true, select_was_down, snapshot_waiting;
+static bool displayed_photo;
+static bool photo_request_cancelled;
+static bool photo_hydration_waiting;
+static uint8_t deferred_inputs[16];
+static unsigned deferred_input_count;
+static const char *deferred_input_names[] = {"up", "down", "left", "right", "a", "b", "start", "select"};
+static char displayed_photo_path[106];
+static char slideshow_id[ID_SIZE], slideshow_path[106];
+static bool photo_dwell_started, photo_private_presented;
+static int64_t photo_wait_until;
+#define PHOTO_DWELL_US 12000000LL
+#define PHOTO_WAIT_US 300000000LL
+static int hydrated_page = TODAY;
+static int64_t next_hydrate_retry;
+static char retained_user[ID_SIZE], retained_person[ID_SIZE];
+static int64_t retained_server_time;
+static unsigned physical_edges[8], blocked_inputs;
+static uint16_t held_buttons;
 static int64_t clock_epoch, clock_started, next_menu_check, next_photo, notice_until;
 static int last_minute = -1;
 static const lv_img_dsc_t *photo_image;
@@ -57,6 +79,19 @@ static const char *keyboard_rows[3][4] = {
     {"QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM@.", "0123456789"},
     {"!@#$%^&*()", "-_=+[]{}\\|", ";:'\",.<>/?", "`~"}
 };
+static void boot_heap(const char *stage)
+{
+#ifdef ESP_PLATFORM
+    /* Heap stages identify allocation failures without exposing configuration,
+     * household data or credentials in the shared serial console. */
+    printf("HQ boot heap=%lu largest=%lu stage=%s\n", (unsigned long)esp_get_free_heap_size(),
+           (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT), stage);
+#else
+    (void)stage;
+#endif
+}
+static cJSON *empty_data(void)
+{ return cJSON_Parse("{\"schema_version\":1,\"home\":{},\"people\":[],\"events\":[],\"chores\":[],\"shopping\":[],\"photos\":[],\"devices\":[],\"agents\":[]}"); }
 
 static const cJSON *field(const cJSON *object, const char *key)
 { return cJSON_GetObjectItemCaseSensitive(object, key); }
@@ -260,6 +295,31 @@ static void align_selection(void)
 }
 static const cJSON *selected(void)
 { return count() ? row_at(selection()) : NULL; }
+static void follow_photo(const cJSON *photo, int64_t now)
+{
+    const char *id = text(photo, "id", ""), *path = text(photo, "path", "");
+    if (strcmp(slideshow_id, id) || strcmp(slideshow_path, path)) {
+        save_id(slideshow_id, id);
+        snprintf(slideshow_path, sizeof(slideshow_path), "%s", path);
+        photo_dwell_started = photo_private_presented = false;
+        photo_wait_until = now + PHOTO_WAIT_US;
+    }
+}
+static void photo_presented(const cJSON *photo, int64_t now)
+{
+    bool private_path = *text(photo, "path", "") != 0;
+    bool private_ready = private_path && !HQ_PhotoIsFallback(photo);
+    if (!private_path || private_ready || now >= photo_wait_until) {
+        /* Eighty fresh 4 KiB requests for a maximum-size private PNG can exceed
+         * the old 12-second slideshow timer and be canceled before completion.
+         * Dwell starts on visible pixels; five minutes bounds fallback waiting
+         * while pause/manual/page controls remain available throughout. */
+        if (!photo_dwell_started || (private_ready && !photo_private_presented))
+            next_photo = now + PHOTO_DWELL_US;
+        photo_dwell_started = true;
+        photo_private_presented = private_ready;
+    }
+}
 static void move_selection(int amount)
 {
     int index = selection() + amount, n = count();
@@ -660,7 +720,7 @@ static void photos_view(void)
         label("Photo unavailable", 8, 49, 144, 25, &lv_font_montserrat_14, WHITE);
         label("Other screens still work.", 8, 78, 144, 20, &lv_font_montserrat_10, WHITE);
     }
-    if (!text(photo, "path", "")[0]) {
+    if (HQ_PhotoIsFallback(photo)) {
         box(19, 31, 79, 14, INK, 3, false);
         label("SAMPLE ART", 22, 33, 73, 12, &lv_font_montserrat_10, WHITE);
     }
@@ -823,8 +883,16 @@ static void render(void)
     /* LVGL objects are rebuilt only when visible state changes. An idle
      * dashboard retains its complete frame instead of rasterizing each tick. */
     lv_obj_clean(panel);
+    displayed_photo = false;
+    if (page != PHOTOS || detail != NONE) HQ_PhotoMaintain(NULL);
+    else HQ_PhotoRetireUnused(selected());
     lv_obj_set_style_bg_color(panel, lv_color_hex(PAPER), 0);
-    if (detail == NONE && page == PHOTOS) photos_view();
+    if (detail == NONE && page == PHOTOS) {
+        follow_photo(selected(), esp_timer_get_time());
+        photos_view(); displayed_photo = true; photo_request_cancelled = false;
+        snprintf(displayed_photo_path, sizeof(displayed_photo_path), "%s", text(selected(), "path", ""));
+        photo_presented(selected(), esp_timer_get_time());
+    }
     else {
         header();
         if (detail == EVENT) event_view();
@@ -849,9 +917,107 @@ static void render(void)
     dirty = false;
 }
 
+static bool hydrate(void);
+static void cancel_departing_photo(void)
+{
+    if (!displayed_photo || photo_request_cancelled || (page == PHOTOS && detail == NONE)) return;
+    /* Cancel decoder/TLS overlap before hydrating the larger destination page.
+     * Reset retains active pixels until widget deletion, so an OOM keeps the
+     * last useful frame rather than leaving LVGL with a freed image source. */
+    HQ_PhotoReset();
+    photo_request_cancelled = true;
+}
+static bool adopt_wire(char *wire)
+{
+    int64_t now = esp_timer_get_time();
+    if (!snapshot_waiting) {
+        /* A failed decode keeps these small identity anchors while the graph
+         * is gone. Retrying must not impersonate an account switch and reset focus. */
+        save_id(retained_user, text(field(data, "viewer"), "user_id", ""));
+        save_id(retained_person, text(field(data, "viewer"), "person_id", ""));
+        retained_server_time = (int64_t)number(data, "server_time", 0);
+    }
+    if (!wire) {
+        free(wire); snapshot_waiting = true; next_hydrate_retry = now + 1000000;
+        return false;
+    }
+    int target_page = page;
+    char before[ID_SIZE], previous_person[ID_SIZE];
+    save_id(before, retained_user); save_id(previous_person, retained_person);
+    int64_t old_server = retained_server_time;
+    /* The service transfers only the projected page bytes. Free the old graph
+     * before decode so Photos never overlaps a calendar tree and decoder heap. */
+    cJSON_Delete(data); data = NULL;
+    cJSON *replacement = cJSON_Parse(wire);
+    free(wire);
+    if (!replacement) {
+        boot_heap("snapshot parse failed");
+        data = empty_data(); snapshot_waiting = true; next_hydrate_retry = now + 1000000;
+        HQ_ServiceRefresh(); return false;
+    }
+    HQ_ServiceOverlay(replacement);
+    const char *after = text(field(replacement, "viewer"), "user_id", "");
+    bool identity_changed = strcmp(before, after) != 0;
+    bool viewer_changed = strcmp(previous_person, text(field(replacement, "viewer"), "person_id", "")) != 0;
+    int64_t new_server = (int64_t)number(replacement, "server_time", 0);
+    if (identity_changed) {
+        memset(focuses, 0, sizeof(focuses)); page = TODAY; detail = NONE; photo_image = NULL;
+        clear_credentials(); if (after[0]) signing_in = false;
+        if (show_sign_in && !after[0]) { page = HOME; detail = ACCOUNT; show_sign_in = false; }
+        if (signing_in && !after[0]) { page = HOME; detail = ACCOUNT; }
+    }
+    data = replacement; hydrated_page = target_page; snapshot_waiting = false;
+    if (new_server && new_server != old_server) { clock_epoch = new_server; clock_started = now; }
+    if (detail != PERSON_CHORES && detail != WHO && detail != ROUTINE) routine = default_routine();
+    if (identity_changed || viewer_changed) {
+        const cJSON *viewer = viewer_person();
+        if (viewer) { save_id(focuses[0].context, "chores"); save_id(focuses[0].id, text(viewer, "id", "")); }
+    }
+    dirty = true;
+    /* An account transition can choose Today/Account after a different page
+     * was projected. Hydrate that destination before aligning any row action. */
+    if (page != hydrated_page) return hydrate();
+    align_selection(); return true;
+}
+static bool hydrate(void)
+{
+    cancel_departing_photo();
+    /* Physical Start during an active photo TLS request drove the heap minimum
+     * to 48 bytes while the next page parsed. Reset cancels immediately, but
+     * only the worker can release TLS; retain the old frame until it is idle. */
+    if (HQ_PhotoWorkerBusy()) { photo_hydration_waiting = true; return false; }
+    bool ready = adopt_wire(HQ_ServiceViewWire(page_keys[page]));
+    if (ready) photo_hydration_waiting = false;
+    return ready;
+}
+
+static void defer_input(const char *button)
+{
+    for (unsigned i = 0; i < sizeof(deferred_input_names) / sizeof(deferred_input_names[0]); ++i) {
+        if (strcmp(button, deferred_input_names[i])) continue;
+        /* Preserve a quick Start/Right/A sequence while canceled TLS unwinds.
+         * Store bounded button codes, never caller-owned console string bytes. */
+        if (deferred_input_count < sizeof(deferred_inputs)) deferred_inputs[deferred_input_count++] = (uint8_t)i;
+        else ++blocked_inputs;
+        return;
+    }
+}
+
+static void replay_inputs(void)
+{
+    while (deferred_input_count && !photo_hydration_waiting && !snapshot_waiting) {
+        unsigned input = deferred_inputs[0];
+        --deferred_input_count;
+        memmove(deferred_inputs, deferred_inputs + 1, deferred_input_count);
+        HomeHQ_Input(deferred_input_names[input]);
+    }
+}
+
 void HomeHQ_Input(const char *button)
 {
-    if (!data || !button) return;
+    if (!button) return;
+    if (photo_hydration_waiting) { defer_input(button); return; }
+    if (!data || snapshot_waiting) { ++blocked_inputs; return; }
     /* A notice describes the last action. Carrying it into another page can
      * cover its confirmation or credentials, so the next deliberate key ends it. */
     notice[0] = 0;
@@ -936,6 +1102,7 @@ void HomeHQ_Input(const char *button)
             else { detail = ACCOUNT; show_sign_in = true; inform("Signed out"); }
         }
     } else return;
+    if (page != hydrated_page && !hydrate()) return;
     align_selection();
     next_photo = esp_timer_get_time() + 12000000;
     dirty = true;
@@ -951,18 +1118,34 @@ void HomeHQ_Show(lv_obj_t *screen)
     lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
     if (!data) {
+        /* The service stores JSON bytes, not a second household object graph.
+         * Even two full 1,281-node graphs exhausted native ESP32 heap before
+         * first paint. This task owns the only decoded household snapshot. */
+        boot_heap("before service");
+        HQ_ServiceInit();
+        char *wire = HQ_ServicePollViewWire(page_keys[page]);
+        boot_heap("before initial parse");
+        data = wire ? cJSON_Parse(wire) : NULL;
+        free(wire);
+        boot_heap("after initial parse");
+        snapshot_waiting = !data;
+        hydrated_page = page;
+        next_hydrate_retry = esp_timer_get_time() + 1000000;
+        if (data) HQ_ServiceOverlay(data);
+        else data = empty_data();
         anyone = cJSON_Parse("{\"id\":\"any\",\"name\":\"Anyone\",\"color\":\"#111111\"}");
         routines = cJSON_Parse("[{\"id\":\"morning\",\"name\":\"Morning\"},{\"id\":\"after\",\"name\":\"After school\"},{\"id\":\"evening\",\"name\":\"Evening\"}]");
         account = cJSON_Parse("{\"id\":\"__account\",\"name\":\"Your account\",\"type\":\"account\"}");
-        data = cJSON_Parse(homehq_demo_json);
-        HQ_ServiceInit();
         clock_epoch = (int64_t)number(data, "server_time", 0);
         clock_started = esp_timer_get_time();
         routine = default_routine();
+        const cJSON *viewer = viewer_person();
+        if (viewer) { save_id(focuses[0].context, "chores"); save_id(focuses[0].id, text(viewer, "id", "")); }
     }
     align_selection();
     HQ_ServiceStatus(status_text, sizeof(status_text), &pending);
     render();
+    boot_heap("after first render");
     /* qMenuInit requires two QSPI row-zero writes before the menu button can
      * expose the MCU overlay. This is the existing factory handshake. */
     for (unsigned frame = 0; frame < 2; ++frame) {
@@ -982,38 +1165,27 @@ void HomeHQ_Maintain(void)
     if (now >= next_menu_check) { next_menu_check = now + 1000000; if (!OSD_IsVisible()) FPGA_Tx_PulseMenu(); }
     const Button_t buttons[] = {kButton_Up, kButton_Down, kButton_Left, kButton_Right, kButton_A, kButton_B, kButton_Start};
     const char *names[] = {"up", "down", "left", "right", "a", "b", "start"};
-    for (unsigned i = 0; i < sizeof(buttons) / sizeof(buttons[0]); ++i)
-        if (Button_GetState(buttons[i]) == kButtonState_Pressed) HomeHQ_Input(names[i]);
+    held_buttons = 0;
+    for (unsigned i = 0; i < sizeof(buttons) / sizeof(buttons[0]); ++i) {
+        if (Button_IsDown(buttons[i])) held_buttons |= (uint16_t)(1u << buttons[i]);
+        if (Button_GetState(buttons[i]) == kButtonState_Pressed) { ++physical_edges[i]; HomeHQ_Input(names[i]); }
+    }
     /* Select is absent from the FPGA's ordinary consumed-edge mask. Sample
      * its held state once per transition instead of reopening on every tick. */
     bool select_down = Button_IsDown(kButton_Select);
-    if (select_down && !select_was_down) HomeHQ_Input("select");
+    if (select_down) held_buttons |= (uint16_t)(1u << kButton_Select);
+    if (select_down && !select_was_down) { ++physical_edges[7]; HomeHQ_Input("select"); }
     select_was_down = select_down;
-    cJSON *replacement = HQ_ServicePoll();
-    if (replacement) {
-        const char *before = text(field(data, "viewer"), "user_id", "");
-        const char *after = text(field(replacement, "viewer"), "user_id", "");
-        bool identity_changed = strcmp(before, after) != 0;
-        bool viewer_changed = strcmp(text(field(data, "viewer"), "person_id", ""), text(field(replacement, "viewer"), "person_id", "")) != 0;
-        int64_t old_server = (int64_t)number(data, "server_time", 0);
-        int64_t new_server = (int64_t)number(replacement, "server_time", 0);
-        if (identity_changed) {
-            /* New identities never inherit an old household's open logout,
-             * selected row or cached image descriptor. */
-            memset(focuses, 0, sizeof(focuses)); page = TODAY; detail = NONE; photo_image = NULL;
-            clear_credentials(); if (after[0]) signing_in = false;
-            if (show_sign_in && !after[0]) { page = HOME; detail = ACCOUNT; show_sign_in = false; }
-            if (signing_in && !after[0]) { page = HOME; detail = ACCOUNT; }
-        }
-        cJSON_Delete(data); data = replacement;
-        if (new_server && new_server != old_server) { clock_epoch = new_server; clock_started = now; }
-        if (detail != PERSON_CHORES && detail != WHO && detail != ROUTINE) routine = default_routine();
-        if (identity_changed || viewer_changed) {
-            const cJSON *viewer = viewer_person();
-            if (viewer) { save_id(focuses[0].context, "chores"); save_id(focuses[0].id, text(viewer, "id", "")); }
-        }
-        align_selection(); dirty = true;
+    if (photo_hydration_waiting) {
+        if (HQ_PhotoWorkerBusy() || !hydrate()) return;
     }
+    /* A current page's mailbox can wait too: polling allocates projected bytes
+     * before parsing, and must not compete with an active photo transport. */
+    char *wire = HQ_PhotoWorkerBusy() ? NULL : HQ_ServicePollViewWire(page_keys[page]);
+    if (wire && !adopt_wire(wire)) return;
+    if (snapshot_waiting && now >= next_hydrate_retry && !hydrate()) return;
+    replay_inputs();
+    if (photo_hydration_waiting) return;
     char next_status[64]; unsigned next_pending;
     HQ_ServiceStatus(next_status, sizeof(next_status), &next_pending);
     if (strcmp(status_text, next_status) || next_pending != pending) {
@@ -1021,6 +1193,7 @@ void HomeHQ_Maintain(void)
         if (signing_in && (strstr(status_text, "Sign-in failed") || strstr(status_text, "Sign in again") || strstr(status_text, "Sign in to your home"))) signing_in = false;
         if ((strstr(status_text, "Sign in again") || strstr(status_text, "Sign in to your home")) && detail != KEYBOARD) { page = HOME; detail = ACCOUNT; }
     }
+    if (!snapshot_waiting && page != hydrated_page && !hydrate()) return;
     int minute = (int)(epoch() / 60);
     if (minute != last_minute) {
         last_minute = minute;
@@ -1029,19 +1202,46 @@ void HomeHQ_Maintain(void)
     }
     if (notice[0] && now >= notice_until) { notice[0] = 0; dirty = true; }
     if (page == PHOTOS && detail == NONE) {
-        if (playing && count() && now >= next_photo) {
+        follow_photo(selected(), now);
+        if (playing && count() && photo_dwell_started && now >= next_photo) {
             save_id(focus_slot()->id, text(row_at((selection() + 1) % count()), "id", ""));
             next_photo = now + 12000000; dirty = true;
+            follow_photo(selected(), now);
         }
         const cJSON *photo = selected();
+        if (displayed_photo && strcmp(displayed_photo_path, text(photo, "path", ""))) {
+            /* Give back the old 18 KiB before queuing its replacement. The
+             * release-only seam preserves a matching pending worker result;
+             * this runs after successful hydration on the sole LVGL task. */
+            lv_obj_clean(panel);
+            displayed_photo = false;
+            HQ_PhotoRetireUnused(photo);
+            photo_image = NULL;
+            dirty = true;
+        }
         HQ_PhotoMaintain(photo);
         const lv_img_dsc_t *image = HQ_Photo(photo);
         if (image != photo_image || HQ_PhotoChanged()) { photo_image = image; dirty = true; }
+        if (!photo_dwell_started && now >= photo_wait_until) dirty = true;
+    } else {
+        slideshow_id[0] = slideshow_path[0] = 0;
+        photo_dwell_started = photo_private_presented = false;
     }
-    if (dirty) render();
+    if (dirty && !snapshot_waiting) render();
+    if (!displayed_photo) { HQ_PhotoMaintain(NULL); photo_image = NULL; }
 }
 
 const char *HomeHQ_Page(void) { return page_keys[page]; }
 const char *HomeHQ_Detail(void) { return detail_keys[detail]; }
 int HomeHQ_Focus(void) { return detail == ACCOUNT && !signed_in() ? auth_focus : detail == KEYBOARD ? keyboard_row * 10 + keyboard_column : selection(); }
 const cJSON *HomeHQ_Data(void) { return data; }
+void HomeHQ_InputDiagnostics(cJSON *object)
+{
+    if (!object) return;
+    const char *keys[] = {"physical_up", "physical_down", "physical_left", "physical_right", "physical_a", "physical_b", "physical_start", "physical_select"};
+    for (unsigned i = 0; i < 8; ++i) cJSON_AddNumberToObject(object, keys[i], physical_edges[i]);
+    cJSON_AddNumberToObject(object, "held_buttons", held_buttons);
+    cJSON_AddNumberToObject(object, "blocked_inputs", blocked_inputs);
+    cJSON_AddBoolToObject(object, "snapshot_waiting", snapshot_waiting);
+    cJSON_AddStringToObject(object, "hydrated_page", page_keys[hydrated_page]);
+}

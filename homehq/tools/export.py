@@ -12,8 +12,10 @@ HOMEHQ = ROOT / "homehq"
 
 README = """# Home HQ starter
 
-A native badge dashboard and a personal Supabase project, inspired by Wes Bos:
+A Supabase extension of Wes Bos's original web dashboard, with native
+Tufty and ModRetro Chromatic clients:
 https://github.com/wesbos/photo-frame-dashboard
+Public fork: https://github.com/meech-ward/photo-frame-dashboard
 
 This bundle contains the authored schema/config, companion, native source,
 tests, local tools and the compiled self-contained badge app. It has no project
@@ -37,14 +39,18 @@ local demo. Reset is for disposable local data; omit it
 when keeping edits. A supported native host needs no Docker. Supabase CLI is
 pinned and checksum-verified; its download needs internet access.
 
-Start at homehq/HANDOFF.md for the source/output map, current state and porting
+Start at homehq/HANDOFF.md for the source/output map, setup and porting
 seams. Read homehq/README.md, backend-README.md and BUILD.md for the authored source,
 ordinary member Auth, hosted deployment and direct on-badge email/password login.
 Create/link family logins in Settings as the household owner. Each badge keeps its
 own refresh token; passwords and access JWTs never enter durable app state.
 The badge network engine retains its cooperative implementation, with Auth/RPC
 interfaces matching https://github.com/meech-ward/supabase-micro at aa30dc4e.
-The full repository's optional browser simulator and firmware instructions are:
+The Chromatic's public MCU source, minimal platform patch and build recipe are
+documented in homehq/chromatic/README.md. This bundle includes its native source
+and tests, not an ESP32 firmware binary. Tufty shared dependencies are copied
+under homehq/vendor/tufty with source attribution and individual SHA-256 hashes.
+The full SELECT repository's optional browser simulator and firmware instructions are:
 https://github.com/meech-ward/select-badge/tree/main/playground
 https://github.com/meech-ward/select-badge/blob/main/docs/deploy.md
 
@@ -92,12 +98,43 @@ def export(target):
             # to canonical source so an extracted starter has no broken links.
             payload = re.sub(r"\]\(([^)]+)\)", outside_guide, payload.decode()).encode()
         files[path] = payload
-    # Copy only the canonical generic dependencies needed to rebuild the app.
-    # No conference application or existing cloud credentials enter the starter.
+    # Keep shared source in one explicit vendored subtree. A cold fork has none
+    # of the SELECT repository's sibling apps; the builder's fallback uses this
+    # same layout without importing conference applications or their credentials.
     from build import inputs
     sources, assets = inputs()
+    vendored = {}
     for source in list(sources.values()) + list(assets.values()):
-        files[source.relative_to(ROOT).as_posix()] = source.read_bytes()
+        relative = source.relative_to(ROOT)
+        if relative.parts[0] == "homehq":
+            if relative.parts[:3] != ("homehq", "vendor", "tufty"):
+                continue
+            relative = Path(*relative.parts[3:])
+        payload = source.read_bytes()
+        vendored[relative.as_posix()] = hashlib.sha256(payload).hexdigest()
+        files["homehq/vendor/tufty/" + relative.as_posix()] = payload
+    revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    provenance = {"repository": "https://github.com/meech-ward/select-badge",
+                  "checkpoint": revision, "files": vendored}
+    # An already-vendored public fork retains its original dependency provenance;
+    # its HEAD identifies the application snapshot, not the shared source origin.
+    existing = HOMEHQ / "vendor" / "tufty" / "provenance.json"
+    if existing.is_file():
+        provenance = json.loads(existing.read_text())
+        if provenance["files"] != vendored:
+            raise ValueError("vendored dependency hashes differ from provenance")
+    files["homehq/vendor/tufty/provenance.json"] = (json.dumps(provenance, indent=2) + "\n").encode()
+    files["homehq/vendor/tufty/README.md"] = b"""# Tufty build dependencies
+
+These generic source, font and public certificate files are copied unchanged
+from the SELECT source repository. Original relative paths and SHA-256 hashes
+are in [provenance.json](provenance.json). Font licensing and aiohttp attribution
+remain beside their source. No account, device state or compiled file is included.
+
+The builder uses canonical paths in SELECT and this subtree in a standalone
+fork or starter. Edit app source under `homehq/badge/homehq/`; shared dependency
+changes belong in their source repository. See [BUILD.md](../../BUILD.md).
+"""
     artifact = HOMEHQ / "build" / "standalone"
     manifest = json.loads((artifact / "manifest.json").read_text())
     if not manifest.get("reproducible") or not manifest.get("runtime_verification"):

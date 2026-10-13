@@ -14,15 +14,16 @@ import re
 import shutil
 import subprocess
 import tempfile
+from dependencies import dependency_path
 
 REPO = Path(__file__).resolve().parents[2]
 FAMILY = REPO / "homehq"
 APP = FAMILY / "badge" / "homehq"
 PIN = "b29530abbd0550c8ab6963024aef36f3cd6cd278"
 APP_FILES = ("__init__.py", "model.py", "view.py", "demo.py", "service.py", "cache.py", "transport.py", "auth_client.py", "login.py")
-LIBRARIES = {"aiohttp": REPO / "network" / "vendor" / "aiohttp",
-             "realtime": REPO / "badgelink" / "badge" / "realtime"}
-CA = REPO / "badgelink" / "badge" / "badgelink" / "ca"
+LIBRARIES = {"aiohttp": dependency_path("network/vendor/aiohttp"),
+             "realtime": dependency_path("badgelink/badge/realtime")}
+CA = dependency_path("badgelink/badge/badgelink/ca")
 CA_FILES = ("gts-we1.der", "gts-root-r4.der", "gts-root-r1.der")
 PHOTOS = ("photo-coast.png", "photo-lake.png", "photo-mountain.png")
 
@@ -33,12 +34,12 @@ def digest(path):
 
 def inputs():
     sources = {Path(name): APP / name for name in APP_FILES}
-    sources[Path("ui.py")] = REPO / "shared" / "ui.py"
-    sources[Path("verified_tls.py")] = REPO / "badgelink" / "badge" / "badgelink" / "verified_tls.py"
-    sources[Path("ws_backoff.py")] = REPO / "network" / "badge" / "ws_backoff.py"
-    sources[Path("kb_shell.py")] = REPO / "shared" / "kb_shell.py"
-    sources[Path("identity_keyboard.py")] = REPO / "identity" / "badge" / "identity" / "identity_keyboard.py"
-    sources[Path("kbqwerty_board.py")] = REPO / "kbqwerty" / "badge" / "kbqwerty" / "kbqwerty_board.py"
+    sources[Path("ui.py")] = dependency_path("shared/ui.py")
+    sources[Path("verified_tls.py")] = dependency_path("badgelink/badge/badgelink/verified_tls.py")
+    sources[Path("ws_backoff.py")] = dependency_path("network/badge/ws_backoff.py")
+    sources[Path("kb_shell.py")] = dependency_path("shared/kb_shell.py")
+    sources[Path("identity_keyboard.py")] = dependency_path("identity/badge/identity/identity_keyboard.py")
+    sources[Path("kbqwerty_board.py")] = dependency_path("kbqwerty/badge/kbqwerty/kbqwerty_board.py")
     for library, directory in LIBRARIES.items():
         # These generic packages are maintained elsewhere in this repository;
         # import dependencies are bundled without the fleet's application layer.
@@ -46,8 +47,8 @@ def inputs():
             sources[Path(library) / source.name] = source
     assets = {Path("ca") / name: CA / name for name in CA_FILES}
     assets.update({Path("assets") / name: APP / "assets" / name for name in PHOTOS})
-    assets[Path("MonaSans-Medium.af")] = REPO / "assets" / "fonts" / "MonaSans-Medium.af"
-    assets[Path("LICENSE-MonaSans")] = REPO / "assets" / "fonts" / "LICENSE-MonaSans"
+    assets[Path("MonaSans-Medium.af")] = dependency_path("assets/fonts/MonaSans-Medium.af")
+    assets[Path("LICENSE-MonaSans")] = dependency_path("assets/fonts/LICENSE-MonaSans")
     assets[Path("aiohttp") / "PROVENANCE.md"] = LIBRARIES["aiohttp"] / "PROVENANCE.md"
     if (APP / "icon.png").is_file():
         assets[Path("icon.png")] = APP / "icon.png"

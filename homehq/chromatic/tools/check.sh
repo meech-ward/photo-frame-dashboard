@@ -12,8 +12,7 @@ cmake -S homehq/chromatic/tests -B "$task_host_output" -G Ninja \
   -DMCU_ROOT="$task_mcu" -DIDF_ROOT="$task_workspace/esp-idf"
 cmake --build "$task_host_output"
 ctest --test-dir "$task_host_output" --output-on-failure
-python3 homehq/chromatic/tests/test_photo_decode.py
-python3 homehq/chromatic/tests/test_deploy.py
+python3 -m unittest discover -s homehq/chromatic/tests -p 'test_*.py'
 HQ_PHOTO_SANITIZE=1 UBSAN_OPTIONS=halt_on_error=1 python3 homehq/chromatic/tests/test_photo_mailbox.py
 bash homehq/chromatic/tools/build.sh "$task_mcu" "$task_workspace"
 git diff --check

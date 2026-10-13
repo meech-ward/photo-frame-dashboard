@@ -1,12 +1,19 @@
-# Home HQ additions
+# Home HQ: one household, three displays
 
-This fork keeps [Wes Bos's photo-frame dashboard](https://github.com/wesbos/photo-frame-dashboard)
-and adds a Supabase household backend, an editor and native device ports under
-`homehq/`. The original root README and `dashboard/` remain unchanged.
+This fork builds on [Wes Bos's photo-frame dashboard](https://github.com/wesbos/photo-frame-dashboard).
+It keeps his original web dashboard and adds a Supabase backend, a household
+editor, and native apps for the **SELECT Tufty 2350 badge** and the
+**ModRetro Chromatic**. Accounts, calendar events, chores, shopping and uploaded
+photos belong to one household and sync between its signed-in devices.
 
-## Run the dashboard in development
+Wes's `dashboard/`, Android frame tools and original README remain unchanged.
+The additions live in `homehq/`; the [upstream manifest](homehq/web/UPSTREAM.md)
+pins and verifies the 29 original frontend files reused by the connected app.
+The badge and Chromatic have their own native layouts and button controls.
 
-Use Node 22.12 or newer. From this repository root:
+## Run the web app
+
+Use Node **22.12+**. From this repository root:
 
 ```sh
 npm --prefix homehq/web ci
@@ -14,87 +21,89 @@ cd homehq/web
 npm run dev
 ```
 
-Open the Local URL printed by Vite. `/` uses Wes's original dashboard frontend,
-with its seven pages, styles, navigation and photo layouts. The original files
-are pinned unchanged in `homehq/web/upstream/`; the Supabase adapter and small
-integration overrides live in `homehq/web/src/upstream.ts` and
-`upstream-data.ts`. Run `node tools/check-upstream.mjs` from `homehq/web` to
-verify that pinned copy. Vite serves source with hot reload in development.
+Open Vite's printed Local URL. `/` displays Wes's dashboard. **Edit household**
+opens `/editor.html` for sign-in, member accounts, editing and photo uploads.
+With no Supabase configuration, the preview clearly says local-only; its data
+does not sync to devices.
 
-Choose **Edit household** or open `/editor.html` for accounts, member setup,
-household editing and photo uploads. Without project configuration, the public
-preview is clearly labelled local-only and uses original mock data. It is not
-connected to a real household or other devices.
+To connect your own household:
 
-## Connect your own Supabase project
+1. Create a Supabase project and follow the
+   [backend deployment guide](homehq/backend-README.md#deploy-to-your-own-supabase-project)
+   to apply the checked-in configuration and migrations.
+2. Copy `homehq/web/.env.example` to the ignored `homehq/web/.env.local`.
+   Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`, then restart Vite.
+   Use the publishable key, never a secret or service-role key.
+3. Create/sign into an owner account in the editor. The first owner sign-in
+   initializes the sample household. Settings creates or links member logins;
+   each browser and device signs in with its own email/password.
 
-Create a fresh project and follow
-[the backend deployment guide](homehq/backend-README.md#deploy-to-your-own-supabase-project)
-to apply the configuration and migrations, including Auth, household policies,
-private Realtime and the private `homehq-photos` Storage bucket. The authored
-declarative schema is in `homehq/supabase/schemas/`; deployed history is in
-`homehq/supabase/migrations/`. The demo operator's hosted helper targets their
-specific project; use the general deployment guide for your own project.
+For hosting, run `npm run build` from `homehq/web` with those environment
+variables set and deploy `dist/` as a static site. Add its URL to your project's
+Auth redirect settings. The [web guide](homehq/web/README.md) covers local and
+hosted setup.
 
-In `homehq/web`, copy `.env.example` to the ignored `.env.local` and replace its
-example values with your project URL and public **publishable key**. These
-variables are the only app project configuration; sign-in asks only for
-email/password. For production, provide them in the build environment. Restart
-Vite after changing environment configuration. Never put a secret or
-service-role key in the frontend, and never copy an existing user's session.
+Private Realtime messages tell clients to fetch the authoritative database
+snapshot. Row policies and private Storage folders restrict access to household
+members. Device sessions keep rotating refresh tokens; passwords are not saved.
+Use **Photos → Add photo**: JPEG, PNG and WebP input is cropped to 320×240 and
+stored as JPEG and PNG variants. Tufty and web prefer JPEG; Chromatic uses the
+PNG variant. Uploads also create the metadata row the slideshow needs.
 
-Sign in or create an ordinary owner account in `/editor.html`. Confirmation
-follows your project's Auth settings. The first owner sign-in initializes the
-example household; use Settings to create/link logins for its other members.
-Each browser and device signs in independently. They share the household's
-database rows and private Realtime channel, while Auth records who performed
-an action. See [the web guide](homehq/web/README.md) for the exact data flow.
+## Choose a device
 
-Use **Photos → Add photo** in the editor. It prepares 320×240 JPEG and PNG
-variants, uploads both to the private bucket and registers its `homehq_photos`
-row. Updated Tufty clients and the web app prefer JPEG; Chromatic and older
-clients use PNG. Files dropped directly into Storage need that metadata row
-before a display can find them.
+| Target | Source | Build and install |
+| --- | --- | --- |
+| Web / Android photo frame | `homehq/web/`, reusing Wes's original frontend | [Web guide](homehq/web/README.md); original [Android kiosk](dashboard/kiosk/README.md) |
+| SELECT badge / Pimoroni Tufty 2350 | `homehq/badge/homehq/`, native MicroPython at 320×240 | [Tufty build/install guide](homehq/BUILD.md) |
+| ModRetro Chromatic | `homehq/chromatic/`, native C/LVGL at 160×144 | [Chromatic build/install guide](homehq/chromatic/README.md) |
 
-Weather, home controls and agent-provider readings remain visibly labelled
-samples. The integration does not connect real appliances or provider accounts.
-Unsupported thermostat, camera, media, scene, historical chore and favourite
-features are not presented as durable controls. Calendar data is the same
-bounded seven-day snapshot used by the native app.
+The fork includes the Tufty app's minimal generic source, font and certificate
+dependencies in [`homehq/vendor/tufty/`](homehq/vendor/tufty/README.md).
+Build it from this repository with the pinned MicroPython compiler; the complete
+SELECT conference repository is not a build dependency. Compatible Badgeware
+firmware is still required. Configure the project's URL/public key and Wi-Fi,
+then sign in on the badge.
 
-## Native devices and canonical source
+Chromatic builds use a separate checkout of the pinned public ModRetro MCU
+source plus the checked-in platform patch. They need ESP-IDF and the documented
+programming connection. This app uses the console's ESP32 display overlay; it
+is not a Game Boy cartridge ROM. The guide states exactly which hardware behavior
+has been verified and which measurements remain open.
 
-The native MicroPython Tufty app is in `homehq/badge/homehq/`; a separate
-Chromatic port is in `homehq/chromatic/`. Their platform and physical acceptance
-requirements are documented in those directories and
-[the Home HQ handoff](homehq/HANDOFF.md).
+## Find and change the code
 
-**This fork is sufficient to run the web frontend and deploy its backend. The
-`homehq/` directory alone is not a standalone native badge build.** Tufty builds
-also collect shared UI/keyboard modules, badge networking, CA files, fonts and
-the compatible Badgeware runtime from the full
-[meech-ward/select-badge repository](https://github.com/meech-ward/select-badge).
-Use its current `homehq/` source and
-[build/install guide](https://github.com/meech-ward/select-badge/blob/main/homehq/BUILD.md)
-for a native build, or use the complete exported starter described there.
-Do not assume this fork's app folder contains the full device dependency set.
+| Change | Start here |
+| --- | --- |
+| Reused dashboard and Supabase adapter | `homehq/web/upstream/`, `src/upstream.ts`, `src/upstream-data.ts` |
+| Household editor and browser client | `homehq/web/src/main.ts`, `src/backend.ts` |
+| Database, Auth, Realtime and photo policies | `homehq/supabase/config.toml`, `schemas/`, `migrations/` |
+| Tufty layout, interaction and sync | `homehq/badge/homehq/view.py`, `model.py`, `service.py`, `transport.py` |
+| Chromatic layout, sync and platform integration | `homehq/chromatic/src/`, `tools/prepare.py` |
+| Shared sample data and device-independent contract | `homehq/fixtures/demo.json`, [CONTRACT.md](homehq/CONTRACT.md) |
+| Source/output map and another-device porting | [HANDOFF.md](homehq/HANDOFF.md) |
 
-The maintained source for these additions is
-[meech-ward/select-badge/homehq](https://github.com/meech-ward/select-badge/tree/main/homehq).
-Wes's original dashboard is preserved here so the additions can be reviewed
-beside it rather than replacing his frontend with a recreation.
+The native ports use a bounded seven-day calendar and smaller layouts. Weather,
+home controls and agent meters remain labelled samples; they do not connect real
+appliances or provider accounts. Original sample names and events come from
+Wes's mock data. Bundled landscape illustrations are labelled sample art.
 
-## Check the web additions
-
-From `homehq/web`:
+## Check and contribute
 
 ```sh
-node tools/check-upstream.mjs
-npm run typecheck
-npm test
-npm run build
+python3 -m unittest discover -s homehq/tests -q
+python3 homehq/tools/sync_demo.py --check
+node homehq/web/tools/check-upstream.mjs
+npm --prefix homehq/web run typecheck
+npm --prefix homehq/web test
+npm --prefix homehq/web run build
 ```
 
-Browser and local backend checks are described in
-[the web guide](homehq/web/README.md). Neither these commands nor this fork's
-presence imply that a physical device has been installed or tested.
+Native graphics, SQL, browser and Chromatic checks have their own focused guides.
+An install alone does not prove physical behavior. Keep generated output,
+`.env.local`, device state, Wi-Fi credentials, sessions and backups out of Git.
+
+[Contribution guidance](homehq/CONTRIBUTING.md) explains the fork's source
+provenance and the small community-build contribution requested by Wes's repo.
+The [social draft](homehq/SOCIAL.md) credits the original project and links the
+code; it has not been published.
