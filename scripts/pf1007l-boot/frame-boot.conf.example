@@ -1,0 +1,35 @@
+# PF1007L boot fixes: settings for one frame.
+# Copy to frame-boot.conf, edit, then run: scripts/pf1007l-boot/install.sh apply
+# install.sh copies it to /data/local/frame-boot.conf on the frame. Keep your copy private:
+# it holds your MAC address and network details. frame-boot.conf is ignored by git.
+# Every value is optional. An empty value turns that part off or uses the default shown.
+
+# Wi-Fi MAC address to use at every boot. The AIC8800 has no stored MAC, so the driver picks a new
+# random one at each boot. Use a locally administered address (second hex digit 2, 6, A or E).
+# Empty: install.sh makes one from the frame's serial number, so it stays the same on reinstall.
+MAC=
+
+# NTP server for the clock. Empty: the Wi-Fi gateway from DHCP.
+NTP_SERVER=
+
+# Start Wi-Fi only after boot has finished (1) or leave it to Android (0).
+# Starting the AIC8800 in the middle of boot browned out or froze the frame on most boots.
+WIFI_DEFER=1
+WIFI_DRIVER=/system/vendor/modules/aic8800_fdrv.ko
+
+# Lift the AXP223 power chip's 500 mA input limit early in boot (1) or leave it (0).
+# Off by default: it removes the chip's USB current limit, and frames on a laptop or bus-powered
+# hub port browned out. Turn it on only with a charger that can supply more than 500 mA.
+POWER_FIX=0
+
+# Only allow network ADB (TCP 5555) from this IPv4 network, for example 192.168.1.0/24.
+# ADB on this firmware is root with no authentication. Empty: no rule is added.
+ADB_ALLOW=
+
+# Drop IPv6 router advertisements on Wi-Fi (1). Use this if your network advertises an IPv6 DNS
+# server the frame cannot reach: every DNS lookup then waits 5-10 s for it first.
+IGNORE_IPV6_RA=0
+
+# The kiosk activity. If the "Select a Home app" chooser is showing at boot, this activity is
+# started instead. Empty: do nothing.
+KIOSK=com.wesbos.homehq/.MainActivity

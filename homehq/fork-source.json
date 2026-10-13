@@ -1,7 +1,7 @@
 {
   "canonical_repository": "https://github.com/meech-ward/select-badge",
   "canonical_checkpoint": "45a5852a342d9c5111ee94dbf5d81b4c176bb7c3",
-  "upstream_revision": "fbe9a30ac4f9c77d3863e19a5e98d9eadb04ab03",
+  "upstream_revision": "0c0defb9b7ab978eb1df954a391819ec7c0889da",
   "original_dashboard_unchanged": true,
   "projection": "homehq/ source with external documentation links made absolute; minimal shared Tufty dependencies under homehq/vendor/tufty",
   "tufty_dependency_provenance": "vendor/tufty/provenance.json",

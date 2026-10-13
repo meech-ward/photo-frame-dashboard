@@ -3,7 +3,7 @@
 The web display uses the actual frontend from
 [wesbos/photo-frame-dashboard](https://github.com/wesbos/photo-frame-dashboard),
 pinned at
-[`fbe9a30ac4f9c77d3863e19a5e98d9eadb04ab03`](https://github.com/wesbos/photo-frame-dashboard/tree/fbe9a30ac4f9c77d3863e19a5e98d9eadb04ab03/dashboard).
+[`0c0defb9b7ab978eb1df954a391819ec7c0889da`](https://github.com/wesbos/photo-frame-dashboard/tree/0c0defb9b7ab978eb1df954a391819ec7c0889da/dashboard).
 `upstream/` contains the original `dashboard/index.html`, `css/`, `js/`, and
 `public/`, byte for byte. The full upstream repository also contains Android
 photo-frame setup, kiosk code, device research and deployment configuration;
@@ -47,6 +47,35 @@ future change genuinely requires modifying upstream, document the exact patch
 and its reason before changing this rule; do not regenerate the manifest merely
 to make a failure disappear. Updating to a newer upstream commit is a deliberate
 dependency update with a reviewed diff and fresh source-derived hashes.
+
+## Upstream review, 2026-10-13
+
+Merged Wes’s upstream through `0c0defb9b7ab978eb1df954a391819ec7c0889da`.
+All 29 reused frontend files are byte-identical to the previous pin
+`fbe9a30ac4f9c77d3863e19a5e98d9eadb04ab03`; the file hashes therefore remain
+unchanged. No adapter, Supabase schema, Tufty or Chromatic changes are required
+by this update.
+
+The substantive application changes are in the Android kiosk: a saved dashboard
+URL, opt-in Home/boot startup, an offline screen with Wi-Fi settings, and recovery
+of its optional navigation service. New frame guides, backup/recovery tools and
+contribution guidance are included by the merge. The original frontend and
+sample household data have not changed.
+
+The new [frame browser guide](../../docs/building-for-the-frame.md) documents
+Chrome 106 and CSS colour limitations; this app already uses the matching
+`chrome106` / `chrome61` build targets. The editor dialog now has a `vh` fallback
+for its newer `dvh` height, keeping sign-in and editing scrollable on Chrome 106.
+Its Android kiosk cannot open file pickers, so upload household photos from the editor in a normal desktop or phone
+browser. The kiosk’s page-load retry does not replace the app’s own Supabase
+reconnect and data-refresh handling. These Android-specific notes do not change
+the native badge or Chromatic implementations.
+
+Validation: all 29 source hashes matched current upstream; 46 web unit tests and
+21 browser tests for login, household updates, private Realtime, task actions and
+JPEG/PNG/WebP photos passed with synthetic project traffic. Type checking and the
+production build passed, including preservation of both dialog height rules.
+No Android frame was connected or flashed for this merge.
 
 ## Bootstrap constraints
 

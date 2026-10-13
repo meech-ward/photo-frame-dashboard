@@ -1,0 +1,50 @@
+# Comment templates
+
+Comments go out under the owner's GitHub account. Keep them short, specific and kind. Say what
+happened, why, and what would be welcome next. Never quote private data back.
+
+## Merged with changes
+
+> Merged, thanks! One change after merging: [what changed], because [why, in one sentence].
+> [Optional: what was not tested on hardware.]
+
+## Merged, the code came from another PR
+
+> Merged, thanks: [what was taken] is in. The [feature] came from #[N] instead, because [one-sentence
+> reason]. I updated your [doc] to match.
+
+## Harvested and closed
+
+> Thanks! [The facts] are now in [link to the doc/row]. We're not merging [the scripts/tree] as they
+> are, because [specific reasons, as a short list]. [A focused follow-up] would be very welcome.
+
+## Changes requested (left open)
+
+> Thanks, this is valuable: [what's good]. Before we can merge it: [the exact change]. [Why, in one
+> or two sentences.] [Optional: "Please coordinate with #N, which covers the same device."]
+
+## Out of scope (closed)
+
+> Thanks for writing this up. It's out of scope for this repo, which is about unlocking frames plus
+> a demo dashboard. It would fit well as a link from
+> [Community Builds](https://github.com/wesbos/photo-frame-dashboard/blob/main/docs/community-builds.md).
+
+## Superseded (closed)
+
+> Thanks! #[N] landed with the same [feature], and it also [extra fix]. Closing this one as covered
+> by #[N].
+
+## Issue answered by the docs (closed)
+
+> Thanks for the report! It's now in [the firmware table / device index / U-Boot table](<link>).
+> Closing as documented. Please reopen if something there doesn't match what you saw.
+
+## Issue still open
+
+> This is still unsolved, so I'm leaving it open. [What has fixed similar problems for others, with
+> a link.] If any of these change what you see, please post the result here.
+
+## Direct question
+
+Answer the question first, with the facts and links. Then the caveats as a short list. Then
+whether the issue stays open.

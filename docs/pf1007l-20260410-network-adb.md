@@ -7,7 +7,22 @@ permanent ADB. The temporary connection ended at the next frame reboot.
 
 Try stock USB ADB and stock network ADB first, as described in
 [pf1007l-start-here.md](pf1007l-start-here.md). This is an additional option for
-the exact firmware below when those tests fail. Read
+the exact firmware below when those tests fail.
+
+> **This is a bootstrap, not the route to keep.** It gives one temporary root
+> session that ends at the next reboot, needs a DNS redirect of the vendor host,
+> and leaves you leaning on an unencrypted vendor command channel. Once you have
+> any root session (this route, Route U or Route S), the stronger maintenance
+> setup is **persistent, key-authenticated Wi-Fi ADB**: patch the boot ramdisk to
+> add your host's `adb_keys`, keep `ro.adb.secure=1`, and start `adbd` on
+> `service.adb.tcp.port=5555`. Then maintenance is just `adb connect <frame-ip>:5555`
+> from one authorised machine, with no DNS changes and no vendor channel, surviving
+> reboots. Route S's ramdisk patch does exactly this; for this firmware it needs the April builder
+> ([unit G](allwinner-a33-sdcard-adb-wifi.md#14-april-20260410-firmware)), and
+> [#64](https://github.com/wesbos/photo-frame-dashboard/pull/64) (not merged) shows the same on another
+> Allwinner A33 Android 6 unit. Reserve the frame's
+> (preferably pinned) Wi-Fi MAC in DHCP so the address is stable. Confirm an
+> unknown host is actually refused before trusting the key check. Read
 [aimor-remote-root-shell.md](aimor-remote-root-shell.md) and the repository's
 [backup, approval and privacy rules](../README.md#rules-we-learned-the-hard-way).
 The tested session already had a verified private backup. Once you have access,
@@ -84,7 +99,7 @@ and then verified by the successful live temporary-ADB session above.
 > [aimor-remote-root-shell.md](aimor-remote-root-shell.md) section 8 in the same session, and reboot
 > the frame to close the port when you are done.
 
-Use these steps only on a frame you own or have permission to administer. Python 3 and Android platform tools (`adb`) are required. The helpers use only the Python standard library. Start with a working AiMOR home screen and normal wall-supply power. A disabled AiMOR package cannot make this connection. If you already replaced Home, re-enable it through your working launcher's Android Settings first.
+Use these steps only on a frame you own or have permission to administer. Python 3 and Android platform tools (`adb`) are required. The helpers use only the Python standard library. Start with a working AiMOR home screen and normal wall-supply power. A disabled AiMOR package cannot make this connection. If you already replaced Home, re-enable it through your working launcher's Android Settings first. If your launcher or kiosk can't reach Android Settings by touch, see [section 6](#6-lockout-after-disabling-aimor-and-offline-recovery).
 
 1. Record the frame's current IP, the Mac's LAN IP, and the existing DNS settings. Keep any device backup, credentials and identifiers private. Define the current addresses in each terminal; the following values are examples:
 
@@ -179,9 +194,14 @@ reachable from the frame over the LAN instead.
 A different local replacement was installed during this unit's session and
 survived reboot. The upstream dashboard, WebView 106 replacement and permanent
 ADB were not tested on this unit and are not added by this contribution. If you
-disable AiMOR after verifying a usable replacement Home, its vendor connection
-closes and this access route is unavailable until you re-enable it. Reboot ends
-temporary ADB even if the replacement software still works.
+disable AiMOR, its vendor connection closes and this access route is unavailable
+until you re-enable it. Reboot ends temporary ADB even if the replacement software
+still works.
+
+> **Update 2026-10-12:** checking for "a usable replacement Home" is not enough. That replacement
+> was a fullscreen kiosk whose only exit was a two-finger hold. It locked this unit out the day
+> after AiMOR was disabled. Before you disable AiMOR, check by hand that you can reach
+> **Android Settings → Apps → AiMOR**. See [section 6](#6-lockout-after-disabling-aimor-and-offline-recovery).
 
 ## 5. Report and validation
 
@@ -215,3 +235,68 @@ exact firmware, then restored DNS and stopped both temporary helpers. A packet
 transmission alone was not treated as success. Private dumps, login contents,
 serials, MACs, Wi-Fi settings, whole-eMMC hashes and replacement-app source are
 excluded from this contribution.
+
+## 6. Lockout after disabling AiMOR, and offline recovery
+
+Observed on the same unit on 2026-10-12, using an Apple silicon Mac.
+
+**How it happened.** The guide's next steps were followed: a kiosk was installed as Home, and
+AiMOR was disabled after the kiosk was shown on screen. The kiosk's only touch exit was a two-finger hold
+of 1.5 s, and it never triggered on the panel. After a reboot, temporary ADB was gone. With AiMOR
+disabled, the Wi-Fi route above could not run.
+
+**Routes that did not get back into Android Settings on this unit:**
+
+| Route | Result |
+| --- | --- |
+| Two-finger hold in the kiosk | Never triggered. See the [kiosk note](allwinner-a33-pf1007l.md#7-build-the-fullscreen-kiosk-and-serve-the-demo-over-usb) and [PR #40](https://github.com/wesbos/photo-frame-dashboard/pull/40) |
+| Android Back | No SystemUI, so no navigation bar (see [start here](pf1007l-start-here.md)) |
+| USB keyboard Esc | The firmware maps Esc to Back, but the single USB-C port is needed for power |
+| On-screen keyboard | The host temporarily served a page with a text field. Long-pressing the space bar opened the input-method chooser and then **Language & input**. That screen had no up/back arrow, so it was a dead end |
+| Router DNS redirect plus reboot | DNS worked, but a disabled AiMOR never connected |
+| USB to the Mac | As in section 1, no usable Android ADB |
+
+**What worked: a read-only look, then one sector written offline.**
+
+1. The SD card with the FEL stub
+   ([section 2 of the PF1007L guide](allwinner-a33-pf1007l.md#2-use-an-sd-card-for-stable-fel-if-adb-is-absent)) put the A33 into FEL at power-on.
+   It was connected through a USB-A-to-C adapter on a rear Mac port; a hub was unreliable. Unplug
+   for five seconds between attempts.
+2. A U-Boot was loaded into RAM over FEL. It exposed **only the eMMC**, read-only, as USB mass
+   storage. That was the setup that worked; attempts that also exposed the SD card never showed
+   the disk. In earlier backups of this unit, lowering the RAM U-Boot's clock to 480 MHz made USB
+   reads stable.
+3. `/data/system/users/0/package-restrictions.xml` on the data partition showed AiMOR with
+   `enabled="2"`. The ext4 journal was copied to the host and replayed locally. This confirmed that
+   no pending transaction touched the block holding that file.
+4. A U-Boot script checked that the sector still held the expected bytes, then wrote **one
+   512-byte sector**. The change restored AiMOR's entry to its default state. A readback checked the
+   file, its inode and the whole 4 KiB block. The rule-1 owner approval was given for this exact
+   write.
+5. After removing the card and booting on wall power, Android showed a Home chooser. Picking AiMOR
+   brought back its vendor connection, and the Wi-Fi route in section 3 worked again.
+
+The scripts used hard-coded this unit's sector offsets, so they are not included. The guarded
+check/apply/restore pattern for a one-sector write is in
+[PR #49](https://github.com/wesbos/photo-frame-dashboard/pull/49) (`scripts/a33-sdboot/sector-write.cmd.in`).
+For this file, the target sector has to be found from your own unit's ext4 metadata. It can also
+move whenever Android rewrites the file.
+
+**What to do instead:**
+
+- Prefer persistent key-authenticated Wi-Fi ADB (see the note at the top of this
+  file) over repeating this temporary route. With a stable `adb connect <frame-ip>:5555`
+  in place, you never need the DNS redirect or the vendor channel again, and you can
+  neutralise AiMOR by blocking its traffic (TCP 7806) instead of disabling the package. Treat that as
+  a stopgap: AiMOR still runs `setenforce 0` at every start and trusts any HTTPS certificate on its
+  other vendor ports. Disable it once you can get back in without it.
+- Before you disable AiMOR, check by hand on the panel: kiosk → Android Settings → Apps → AiMOR.
+  Some builds hide disabled apps there (#69), so this check alone is not enough: have persistent ADB first.
+- Give the kiosk a way out that needs one finger, such as a corner button revealed by a single tap.
+  On this unit, such a button appeared after an ADB-injected tap. It has not yet been checked by
+  hand, which is the test that counts.
+- If you would rather leave AiMOR enabled for now, keep TCP 7806 blocked on the router, as in
+  [aimor-remote-root-shell.md](aimor-remote-root-shell.md) section 8. That stops the vendor's root
+  command channel. The local redirect in section 3 still works if the frame can reach the host on 7806.
+- With both launchers enabled, Android 6 asks which Home to use. This firmware has no
+  `cmd package set-home-activity`, so choose **Always** on the panel.

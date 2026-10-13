@@ -23,7 +23,9 @@ is loader `0x14000` and `mmcblk0p5` start 90112 (`0x16000`); the two reads have 
   boot, recovery, and system data at loader `0xC0000` match re-reads.
 - `/system` ext4 superblock mount count: 14,947 in the backup, 15,028 about 7 minutes later, and
   15,036 → 15,042 over 30 s. Something remounts `/system` about 12 times a minute; SuperSU's
-  `daemonsu:mount:master` is the likely cause (not confirmed). Only the superblock (sector 2) and
+  `daemonsu:mount:master` is the likely cause (not confirmed on this unit; confirmed on a Uhale 102KZ,
+  where the count stood still with the `daemonsu` service stopped and rose again when it was started:
+  see [uhale-102kz.md](uhale-102kz.md#daemonsu-is-what-remounts-system)). Only the superblock (sector 2) and
   journal sectors 1329–1330 of system differed from the backup.
 
 ## Hardware and ports
@@ -50,6 +52,8 @@ is loader `0x14000` and `mmcblk0p5` start 90112 (`0x16000`); the two reads have 
   on the frame, not the Mac.
 - It then appeared in Rockchip loader mode (`2207:310d`). Exactly what triggered loader mode
   is unconfirmed (it happened around the cable swap; the reset-button-at-power-on method had been suggested).
+  On a Uhale 102KZ, the same SoC, holding the reset pinhole while plugging in USB-C and for 6 to 8
+  seconds after entered loader mode each time: see [uhale-102kz.md](uhale-102kz.md#1-loader-mode).
 
 ## Stock recovery
 

@@ -221,6 +221,11 @@ with published tools: a read-only `ums` backup, then a guarded boot write.
 
 ## 3. Confirm root ADB before the Android setup
 
+The [January Windows unit report](pf1007l-windows-20260113-usb-adb-report.md)
+reached USB root ADB with a verified one-sector `build.prop` edit after bulk
+U-Boot reads failed. Its boot image remained original. It also records the
+Windows raw-disk, console-pause, and binary `exec-out` pitfalls from that session.
+
 Only continue once Android boots and ADB actually works:
 
 ```sh
@@ -279,6 +284,12 @@ before any replacement. A `dd`/`tar` error may otherwise leave a misleading file
 Old `adbd` can merge remote stderr into binary `exec-out` output; the `2>/dev/null`
 in these commands prevents a `dd` status footer from contaminating the image.
 
+To read the whole eMMC in chunks (`/dev/block/mmcblk0` with `skip=`), use
+`/sbin/busybox dd`. The stock `dd` returned **0 bytes, with no error**, for every chunk
+that starts at 2 GiB or later (firmware 20260529, observed). `busybox dd` read those
+chunks, and gave the same bytes as the stock `dd` below 2 GiB. Check each chunk's size,
+not only its hash: an empty chunk has the same MD5 on the frame and on the host.
+
 The tested session independently verified the whole system partition and boot
 image. Recovery had partial spot checks rather than a complete second reread.
 This was **not a full-device backup**: userdata, hardware boot areas and every
@@ -311,7 +322,10 @@ adb -d install diagnostics/firefox.apk
 adb -d shell am start -a android.intent.action.MAIN -c android.intent.category.HOME -p amirz.rootless.nexuslauncher
 ```
 
-Confirm the new launcher is visible before disabling the vendor launcher:
+Confirm the new launcher is visible before disabling the vendor launcher. Also check by hand on the
+panel that you can reach Android Settings → Apps from it. On a unit without working USB ADB,
+AiMOR is the only route back in that doesn't need the SD card; see
+[the lockout notes](pf1007l-20260410-network-adb.md#6-lockout-after-disabling-aimor-and-offline-recovery).
 
 ```sh
 adb -d shell pm disable com.efercro.os.aimor
@@ -430,6 +444,11 @@ Keep the host server and USB connected. Recreate the reverse mapping after a
 device/ADB restart. Hold two fingers still for **1.5 seconds** to exit to the
 launcher. Boot auto-start is not implemented by this procedure.
 
+Don't make a two-finger hold your only way out. On one April unit, a different kiosk's two-finger
+hold never triggered for the owner. The `gslX680` driver reports multitouch (tracking IDs 0–11),
+but [PR #40](https://github.com/wesbos/photo-frame-dashboard/pull/40) observed that it reads two
+fingers held close together as one touch. A control revealed by a single tap did work on that unit.
+
 The dashboard contains **sample data**, not your real calendar. Older Android
 trust stores can reject external HTTPS images even though the local HTML loads.
 That happened with Picsum on this unit. Our local setup used a host image proxy
@@ -495,3 +514,27 @@ measure again; do not assume the Rockchip swap prescription applies.
 
 This setup does not update Android, remove the root exposure, configure automatic
 startup, or integrate real calendar data. Those are separate tasks.
+
+## Native Linux / Omarchy SD build
+
+Paolo Rosson ([`@redp314`](https://x.com/redp314)) built a separate, experimental
+Arch Linux ARM and Omarchy path for the Humblestead HM-PF1007-BK / EFERCRO
+PF1007L variant. It boots from microSD and deliberately leaves the original
+eMMC untouched; it is independent of this guide's Android recovery and boot
+patch routes.
+
+The tested unit has an Allwinner A33, 1 GB RAM, Mali-400 graphics, an 800×1280
+DSI panel, Silead touch, and AIC8800 Wi-Fi/Bluetooth. Its working features are
+Hyprland/Omarchy, display and touch rotation, an on-screen keyboard, Wi-Fi,
+and Bluetooth LE mouse/keyboard support. Audio, accelerometer-based rotation,
+and automatic ambient-light dimming are still being brought up. The internal
+radio is 2.4 GHz only.
+
+The SD-image builder and frame-specific installer are at
+[`pangoleen/ormarch-picture-frame`](https://github.com/pangoleen/ormarch-picture-frame/tree/a3d83874aabcae655f245973e6408937a591e39f)
+(linked at the commit we looked at). **It is third-party and has not been reviewed here.** The image
+enables passwordless `sudo` and an auto-login console on USB serial, so anyone with the frame in
+hand has root.
+They are for this exact PF1007L hardware family: start with the device checks
+and keep the original card and Android firmware backup before attempting the
+Linux route.

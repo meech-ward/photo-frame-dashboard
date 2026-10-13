@@ -1,0 +1,29 @@
+diff --git a/arch/arm/dts/sun8i-a33-pf1007l-backup.dts b/arch/arm/dts/sun8i-a33-pf1007l-backup.dts
+index 783593da..3aae219f 100644
+--- a/arch/arm/dts/sun8i-a33-pf1007l-backup.dts
++++ b/arch/arm/dts/sun8i-a33-pf1007l-backup.dts
+@@ -16,7 +16,9 @@
+ 	pinctrl-names = "default";
+ 	pinctrl-0 = <&mmc2_8bit_pins>;
+ 	vmmc-supply = <&reg_dcdc1>;
+-	bus-width = <8>;
++	bus-width = <4>;
++	max-frequency = <26000000>;
++	pf1007l,no-mmc-hs;
+ 	non-removable;
+ 	cap-mmc-hw-reset;
+ 	status = "okay";
+diff --git a/drivers/mmc/sunxi_mmc.c b/drivers/mmc/sunxi_mmc.c
+index e28c81af..f9ec04a9 100644
+--- a/drivers/mmc/sunxi_mmc.c
++++ b/drivers/mmc/sunxi_mmc.c
+@@ -688,6 +688,9 @@ static int sunxi_mmc_probe(struct udevice *dev)
+ 
+ 	cfg->voltages = MMC_VDD_32_33 | MMC_VDD_33_34;
+ 	cfg->host_caps = MMC_MODE_HS_52MHz | MMC_MODE_HS;
++	/* PF1007L: some Samsung eMMCs stop answering after HS_TIMING=1; stay in legacy timing */
++	if (dev_read_bool(dev, "pf1007l,no-mmc-hs"))
++		cfg->host_caps = 0;
+ 	cfg->b_max = CONFIG_SYS_MMC_MAX_BLK_COUNT;
+ 
+ 	cfg->f_min = 400000;

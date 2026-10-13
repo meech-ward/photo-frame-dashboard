@@ -1,6 +1,6 @@
 # Pastigio 15.6" Frameo frame (`FRAME156`, RK3326, Android 8.1)
 
-Record of one unit, started 2026-10-09. Observations are kept separate from guesses. Unique
+Original record of one unit, started 2026-10-09, with an [additional macOS unit report](#additional-unit-tested-on-macos-2026-10-12) below. Observations are kept separate from guesses. Unique
 identifiers (serial, MAC, IP) are left out; they live in the ignored `backups/` and `diagnostics/` folders.
 
 ## Observations (read-only unless noted)
@@ -133,4 +133,89 @@ found; this does not rule out a fitted but unpowered sensor. Not pursued further
 - `su` gives root with no prompt and no manager app, so any app installed on this frame can take root. Install nothing untrusted.
 - Android 8.1 with a 2020-11 security patch; SELinux is permissive. Keep the frame on a guest or IoT network.
 - Management was done over USB ADB. Network ADB (5555) was also found open on the Wi-Fi address on 2026-10-10; how it was enabled was not recorded. Until it is closed, anything on the network can reach ADB, so keep the frame on an isolated network.
+
+## Additional unit tested on macOS (2026-10-12)
+
+Another owner's `FRAME156` matched the firmware, RK3326, Android 8.1/API 27, security patch,
+1920x1080 display at 170 dpi, WebView 106 and partition table above. The host ran macOS 26.6.2.
+These observations apply to this unit; the cause of the host USB behavior remains unproven.
+
+| Additional observation | Value |
+| --- | --- |
+| ADB USB vendor/product | `2211:0006`, product/model `FRAME156` |
+| Frameo updated system app | `v1.32.12_-_OTA_test` under `/data/app`; original system APK `v1.29.13` |
+| Stock launcher | `com.android.launcher3` was already disabled before kiosk installation |
+| Root and SELinux | Shipped `su` returned uid 0 without a manager prompt; ordinary shell was uid 2000; `getenforce` reported `Permissive` |
+| Boot properties | `ro.boot.veritymode=enforcing`, `ro.boot.flash.locked=1` |
+| eMMC size | `/dev/block/mmcblk2`, 31,264,342,016 bytes |
+
+### ADB authorization and reconnecting after a reboot
+
+With Frameo **Settings -> About -> Beta Program -> ADB Access** enabled and computer photo
+transfer off, the host initially showed `unauthorized`. Accepting Frameo's own warning, which
+linked to `frameo.com/adb_faq`, changed the host status to `device`. The authorization succeeded
+without injecting an ADB key or using a loader.
+
+Attempts to enter Rockchip loader mode with the power button did not yield a recognized loader
+on this unit. A black display also occurred while ordinary Android ADB was enumerating.
+This does not establish that loader mode is impossible, and a black display alone is not proof
+of loader entry. The successful FRAME157 procedure in #39 concerns a different model/firmware.
+
+During earlier cable testing, moving the USB adapter to another host port exposed the current
+connection state after the host appeared to retain an old USB enumeration. That may be host or
+adapter dependent.
+
+After `adb reboot`, the host did not re-enumerate the frame within 150 seconds, although the
+owner reported that the kiosk had returned. Disconnecting and reconnecting USB on the frame
+side restored ADB. A changed kernel boot ID and `sys.boot_completed=1` confirmed a new boot.
+The kiosk was still the default HOME and resumed activity; Frameo and the OTA app remained
+disabled. The cause of the USB reconnection behavior was not established.
+
+### Full eMMC and boot-region backup
+
+Captured the complete eMMC through the shipped `su`, compressing the stream on the device and
+encoding it in base64 before transport. The method above gave a byte-exact 1 MiB probe with
+matching device/host SHA-256. Unencoded `su` newline behavior was not separately retested on
+this unit.
+
+The full gzip readback produced exactly 31,264,342,016 bytes, including `cache` and `userdata`.
+No complete 1 MiB block consisted of `0xCC` filler. Independent device reads matched the saved
+ranges for `uboot`, `trust`, `misc`, `resource`, `kernel`, `boot`, `recovery`, `backup`, `security`,
+`system`, `metadata`, `vendor` and `frp`.
+
+`oem` reproduced the one-byte difference described above: partition offset `0x1702b` was `0x00`
+in the full capture and `0x02` in the later read. The containing page had the JBD journal
+superblock magic `0xc03b3998`. A separate current OEM capture matched two further device reads.
+The reason for the change was not proven.
+
+Both 4 MiB `mmcblk2boot0` and `mmcblk2boot1` regions were also captured, each with exact gzip
+readback size and two matching device hashes. `rpmb` was not captured.
+
+Android stayed running during the full eMMC capture. `cache` and `userdata` were not compared
+against later live reads, so this is **not a transactional filesystem snapshot**. After Frameo
+was disabled, its private data, local media directory and installed APK were additionally
+archived and the tar was read back successfully. Dumps, APKs and whole-disk hashes stayed private.
+Firmware restoration and physical loader entry remain unverified.
+
+### Kiosk startup and dashboard aspect ratio
+
+A separately implemented WebView kiosk with a HOME intent filter loaded the published demo
+using the existing WebView and CA store. The HOME component was selected with
+`cmd package set-home-activity --user 0 <kiosk-package>/<activity>`. Frameo and
+`com.muxintu.app.mxota` were disabled using the `pm disable-user` commands above, preserving
+their installed packages and data. The existing undo commands still apply. The kiosk opened
+automatically after a reboot. No change to `/system`, `/vendor`, `/oem` or firmware partitions
+was needed for installation.
+
+The published demo's fixed 1280x800 stage fitted this 1920x1080 display at 1728x1080, leaving
+96-pixel black bars on each side. This was the page layout, rather than an Android window-size
+limit. A local kiosk adaptation kept the logical width at 1280, adjusted the logical height to
+the screen aspect ratio and compacted the home view's vertical rows, filling 1920x1080 with a
+uniform scale. Device screenshots confirmed the result; separate browser tests checked stage
+bounds, visible home controls, repeat application and navigation through all seven sections at
+1920x1080 and 1280x800. The aspect-ratio change was tested after the reboot/startup check and
+is only reported here; this contribution does not change the dashboard implementation.
+
+Motion/PIR support, firmware restoration, other units and other firmware versions were not
+tested in this report.
 

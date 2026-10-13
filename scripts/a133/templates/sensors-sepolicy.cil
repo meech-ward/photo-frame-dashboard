@@ -1,0 +1,6 @@
+; LOOFII C-3: vendor sensors@2.0 HAL (Allwinner) under enforcing SELinux
+(allow hal_sensors_default system_server (fd (use)))
+(allow hal_sensors_default sysfs_sound (dir (search)))
+(allow hal_sensors_default sysfs_sound (file (read open getattr)))
+(allow hal_sensors_default default_prop (file (read open getattr map)))
+(allow hal_sensors_default system_prop (property_service (set)))

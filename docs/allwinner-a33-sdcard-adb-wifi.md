@@ -45,6 +45,8 @@ The stock firmware does not start `adbd`. The new `on boot` action starts it at 
 
 ## 3. Equipment and software
 
+For macOS, use the [macOS steps below](#macos).
+
 - A Windows PC with Python 3 and the Android platform tools (`adb`).
 - WSL with Ubuntu 24.04, or a Linux PC, to build U-Boot.
 - A new microSD card, 4 GB minimum, 256 GB maximum. Use this card only for the frame.
@@ -67,6 +69,81 @@ The scripts are in this repository:
 
 All output goes to `backups/` and `diagnostics/`. Do not publish these folders.
 They contain firmware, serial numbers and Wi-Fi passwords.
+
+## macOS
+
+Use these steps in place of sections 4 to 9. Install Python 3 and the Android platform
+tools (`adb`). Start Docker Desktop or another Docker engine. Run the commands at the
+repository root.
+
+1. Build U-Boot and the dump script:
+
+   ```sh
+   bash scripts/a33-sdboot/build-macos.sh
+   ```
+
+   The helper downloads the pinned U-Boot source and builds the Docker image. It then
+   runs `build.sh` with no network access and with the source mounted read-only.
+
+2. Insert a spare 4–256 GB card in a removable USB reader. Find its disk number, then
+   replace `diskN` below. **Prepare erases the card.** Check the printed size and name
+   before you type `ERASE diskN`.
+
+   ```sh
+   diskutil list external physical
+   diskutil info diskN | grep 'Disk Size'   # <exact-bytes> is the number of bytes shown
+   sudo python3 -I scripts/a33-sdboot/card-macos.py prepare diskN <exact-bytes>
+   ```
+
+   The helper makes an MBR/FAT32 partition, saves the card identity and boot-area backup
+   in `diagnostics/a33-sdboot/macos-card/`, and checks each write by reading it back.
+   It then ejects the card. Keep that folder with the card.
+
+3. Disconnect frame power, insert the card, then connect power. Do not press the power
+   button. The screen stays dark. Wait 30 minutes, disconnect power, and put the card
+   in the Mac. Check its disk number again, then verify and save the dump:
+
+   ```sh
+   diskutil list external physical
+   python3 -I scripts/a33-sdboot/card-macos.py backup diskN <exact-bytes>
+   ```
+
+   All 32 chunks must pass. The helper uses `check-dump.py` to save and verify the copy
+   in `backups/pf1007-emmc/`, then ejects the card. Make a second copy on another disk.
+   This is the first 2 GiB, not a full-device backup. Dump verification also works on
+   April `20260410` units.
+
+4. Build the patch and both write scripts. **The write build accepts only the January
+   boot hash from section 1.** It stops on April and other boot images.
+
+   ```sh
+   adb devices
+   python3 -I scripts/a33-sdboot/patch-boot.py --pubkey ~/.android/adbkey.pub --out diagnostics/pf1007/patched
+   cat diagnostics/pf1007/patched/REPORT.txt
+   bash scripts/a33-sdboot/build-macos.sh apply
+   bash scripts/a33-sdboot/build-macos.sh restore
+   ```
+
+   Check that the report shows the original hash from section 1, two 15,886,336-byte
+   images, and `True` for the kernel and header checks. Keep the restore files.
+
+5. Reinsert the card. Copy the apply files to it, then eject it. The dump files can stay.
+
+   ```sh
+   cp diagnostics/pf1007/patched/sdcard-apply/{a33.scr,boot-patched.img} /Volumes/FRAMEBOOT/
+   diskutil list external physical
+   diskutil eject diskN
+   ```
+
+   With frame power disconnected, insert the card and connect power. **Do not disconnect
+   power during the write.** Wait 5 minutes, disconnect power, and return the card to the
+   Mac. Read `/Volumes/FRAMEBOOT/a33-write-status.txt`. Use the result table in section 9;
+   only `OK_WRITTEN_AND_VERIFIED` or `ALREADY_APPLIED_NO_WRITE` is a pass. Then continue
+   at section 10. To undo the patch, use the restore files as described in section 13.
+
+To reuse the card after you no longer need it for a restore, run
+`sudo python3 -I scripts/a33-sdboot/card-macos.py clean diskN <exact-bytes>`. This restores its saved
+boot area and ejects it. It does not restore the card contents erased by `prepare`.
 
 ## 4. Prepare the build tools
 
@@ -289,3 +366,79 @@ It writes only if p6 has the SHA-256 of your patched image.
 3. Remove the card. Android starts without ADB.
 
 The card keeps U-Boot in its boot area. Keep the card with the frame for the next restore.
+
+## 14. April 20260410 firmware
+
+Sections 7 to 9 refuse April firmware, because its boot image has a different SHA-256
+(`8ffc2a7d95972422b97ecf7e82da7002011bdacedcbfcc74dd52ae871b98a24e`). That is the guard working.
+Do not edit it. Two units on this firmware were rooted with this card route and an April patch
+builder instead: #17 and unit G below.
+
+### Where the April patch builder is
+
+The builder is `scripts/pf1007l-macos/build-root.py` in an earlier version of PR #14, commit
+[`f91f4c3`](https://github.com/wesbos/photo-frame-dashboard/tree/f91f4c3acb8acaf5a6f0ef3087d4d3c7ad6a10a7).
+It accepts only the April hash above. It reuses `patch-boot.py` and `boot-write.cmd.in` from this
+folder, so the ramdisk change, the on-frame guards and the undo are the same as in sections 2, 8 and 13.
+PR #14 was later reduced to macOS card helpers and no longer contains this builder.
+It was never merged, so it has had less review than the scripts on `main`.
+
+### Unit G
+
+Tested 2026-10-12. Host: Windows 11 with WSL 2, Ubuntu 24.04.3.
+
+| Item | Observed |
+| --- | --- |
+| About model / firmware | PF1007L / `YHK.F-null-A33-1001-D1024-PF1007L-321-OS-AIMOR.0.20260410` |
+| AiMOR | 6.0.78 |
+| Ports | USB-C only, TF slot, button. Powered from a USB-A port with an A-to-C cable |
+| USB data, stock network ADB (T3, T3b) | Not tested. The frame was never connected to the PC over USB |
+| Card | 64 GB SDXC, MBR, one 31 GB FAT32 partition starting at 16 MiB |
+| Section 6 dump | `stage: finished`, `emmc_dev: ok`, all 32 chunks `ok` |
+| Partition starts | env 139264, boot 172032, system 237568, recovery 2400256 |
+| Boot image SHA-256 | `8ffc2a7d…`, same as #13, #17, #20 and #27 |
+| eMMC size | Not measured. The dump covers only the first 2 GiB |
+| Patch report | `kernel region identical: True`, `header identical except size/id: True` |
+| Write result | `OK_WRITTEN_AND_VERIFIED`, `h_before` = `8ffc2a7d…` |
+| After boot | `uid=0(root)` over Wi-Fi on port 5555, no prompt on the frame. Still root after a reboot |
+| Fingerprint | `AEEZO/astar_m86_8723cs/astar-m86_8723cs:6.0.1/MOB30R/20260410:eng/test-keys` |
+
+What was different from sections 4 to 9:
+
+1. The builder runs `mkimage` in Docker. Unit G used the `mkimage` that section 4 builds
+   (`diagnostics/a33-sdboot/build/tools/mkimage`) instead. No other line of the builder was changed.
+2. Section 7's key came from Windows (`%USERPROFILE%\.android\adbkey` and `.pub`). It was copied
+   into `~/.android/` in WSL for the builder, so both the Windows and the WSL `adb` can connect with it.
+
+After root, unit G followed [aimor-remote-root-shell.md](aimor-remote-root-shell.md): AiMOR,
+`com.yhk.qeota` and `com.DeviceTest` disabled, `enabled="2"` saved. After a reboot there was no
+vendor process and no `:7806` socket. WebView 106, the ISRG Root X1 certificate and the kiosk came
+from the same PR #14 commit (`install.py`). After a reboot WebView reported `106.0.5249.126`.
+
+### AiMOR connects quickly
+
+The owner paused the frame's internet in the router app (eero) right after it joined Wi-Fi.
+When ADB first connected, `netstat` already showed an `ESTABLISHED` connection to a vendor host on
+port 7806. It is not known whether that connection was made before the pause took effect.
+`iptables -I OUTPUT -p tcp --dport 7806 -j REJECT` and `am force-stop com.efercro.os.aimor` closed
+it, and AiMOR was disabled next.
+
+eero can pause a device but can't block one outbound port. The pause also does not survive a
+reboot, because the frame's Wi-Fi MAC changes at each boot.
+
+Not tested, a suggestion only, and **only with persistent ADB like Route S's**: if your router can't
+block port 7806, disable AiMOR as your first ADB command, before you install a launcher. Never do
+this when your only ADB is temporary (T3c): see T8 in the [start page](pf1007l-start-here.md#t8-lock-it-down-before-the-frame-stays-online). On unit G, AiMOR was disabled while it was still the
+only Home app. Settings was then opened with `am start -a android.settings.SETTINGS`, and the frame
+kept working until the kiosk was installed.
+
+### Windows and WSL problems on unit G
+
+| Problem | What fixed it |
+| --- | --- |
+| `build.sh` stopped with `set: pipefail: invalid option name` | Git for Windows had checked the scripts out with CRLF. Clone inside WSL instead (`git -c core.autocrlf=false clone …` into `~`) |
+| U-Boot build from a Windows folder whose path has a space | Build in the WSL clone, then copy the outputs to the Windows clone for `fel-sdcard.py` |
+| Windows will not format FAT32 larger than 32 GB | One FAT32 partition of 31 GB on the 64 GB card. Section 3's 4 to 256 GB range already allows this |
+| The kiosk build needs `zip`, which WSL's Ubuntu does not ship | A small Python script that does `zip -qj`, to avoid another `sudo apt install` |
+| `yes \| sdkmanager --licenses` exits with 141 under `set -o pipefail` | `(yes \|\| true) \| sdkmanager … \|\| true` |
+| Git Bash rewrote `/data/local/tmp/…` in `adb pull` | `MSYS_NO_PATHCONV=1` |

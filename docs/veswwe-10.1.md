@@ -1,5 +1,8 @@
 # VESWWE 10.1-inch Wi-Fi photo frame
 
+> Another frame with the same `VESWWE DP100` About screen reports `ro.product.model` `DP101`,
+> Android 10 and WebView 113. It needs none of the steps below; see [veswwe-dp101.md](veswwe-dp101.md).
+
 Investigation started 2026-10-12. This is a record of one owner's unit, not a
 flashing guide. Hardware identity is established through stock USB ADB.
 

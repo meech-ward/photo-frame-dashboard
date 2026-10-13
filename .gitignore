@@ -14,3 +14,9 @@ __pycache__/
 *.HEIC
 *.heic
 scripts/si006-webview-overlay/build/
+
+# PF1007L boot fixes: per-frame settings (MAC, network).
+/scripts/pf1007l-boot/frame-boot.conf
+
+# Private per-frame records (docs/frame-records.md). No trailing slash, so a symlink is ignored too.
+/frames

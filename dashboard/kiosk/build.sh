@@ -7,7 +7,9 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 ANDROID_HOME="${ANDROID_HOME:-/opt/homebrew/share/android-commandlinetools}"
-BT="$ANDROID_HOME/build-tools/34.0.0"
+# d8 from build-tools 34 crashes (NullPointerException) on classes from some newer JDKs; then
+# point BUILD_TOOLS at a newer version, e.g. BUILD_TOOLS=$ANDROID_HOME/build-tools/36.1.0
+BT="${BUILD_TOOLS:-$ANDROID_HOME/build-tools/34.0.0}"
 JAR="$ANDROID_HOME/platforms/android-34/android.jar"
 KS="$HOME/.android/debug.keystore"
 

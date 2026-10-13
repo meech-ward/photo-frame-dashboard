@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 const web = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const upstream = join(web, 'upstream');
-const pinned = 'fbe9a30ac4f9c77d3863e19a5e98d9eadb04ab03';
+const pinned = '0c0defb9b7ab978eb1df954a391819ec7c0889da';
 
 async function filesBelow(directory) {
   const files = [];

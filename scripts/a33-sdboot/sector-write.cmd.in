@@ -1,0 +1,85 @@
+# a33: guarded one-sector edit of /system/build.prop on the PF1007L eMMC (sector 399221 = 0x61775).
+# @MODE@: expects the sector to equal @FROM@ and replaces it with @TO@ (same 512 bytes, see PR #6/#13).
+# Runs from our SD-booted U-Boot. The ONLY eMMC write is the single-sector "mmc write" below.
+# Guards, in order (any failure stops before the write):
+#   1. both files on the card are exactly 512 bytes with the expected SHA-256
+#   2. the eMMC sector hashes to @FROM@ (if it already hashes to @TO@, nothing is written)
+#   3. the current sector is saved to the card (sector-before-@MODE@.bin) before writing
+#   4. after the write, the sector is read back and must match @TO@ by SHA-256 and byte compare
+# The eMMC is touched as early as possible: on this board it can stop responding after a while.
+# The status file is saved at the start and just before the write, so a hang shows how far it got.
+
+setenv f 0x48000000
+setenv t 0x48001000
+setenv c 0x48002000
+setenv r 0x48003000
+setenv e 0x47000000
+setenv sec 0x61775
+setenv sha_from @SHA_FROM@
+setenv sha_to @SHA_TO@
+setenv a33_stage started
+setenv result none
+env export -t ${e}
+fatwrite mmc 0:1 ${e} a33-sector-status.txt ${filesize}
+
+if fatload mmc 0:1 ${f} @FROM@ && test "${filesize}" = "200"; then
+  hash sha256 ${f} 0x200 h_from
+  if fatload mmc 0:1 ${t} @TO@ && test "${filesize}" = "200"; then
+    hash sha256 ${t} 0x200 h_to
+    if test "${h_from}" = "${sha_from}" && test "${h_to}" = "${sha_to}"; then
+      setenv a33_stage files_ok
+      if mmc dev 1; then
+        if mmc read ${c} ${sec} 1; then
+          hash sha256 ${c} 0x200 h_before
+          if fatwrite mmc 0:1 ${c} sector-before-@MODE@.bin 0x200; then
+            if test "${h_before}" = "${sha_to}"; then
+              setenv result ALREADY_APPLIED_NO_WRITE
+            else
+              if test "${h_before}" = "${sha_from}"; then
+                setenv a33_stage about_to_write
+                env export -t ${e}
+                fatwrite mmc 0:1 ${e} a33-sector-status.txt ${filesize}
+                setenv a33_stage writing
+                mmc dev 1
+                if mmc write ${t} ${sec} 1; then
+                  setenv a33_stage written
+                  if mmc read ${r} ${sec} 1; then
+                    hash sha256 ${r} 0x200 h_after
+                    fatwrite mmc 0:1 ${r} sector-after-@MODE@.bin 0x200
+                    if test "${h_after}" = "${sha_to}" && cmp.b ${r} ${t} 0x200; then
+                      setenv result OK_WRITTEN_AND_VERIFIED
+                    else
+                      setenv result FAIL_VERIFY
+                    fi
+                  else
+                    setenv result FAIL_READBACK
+                  fi
+                else
+                  setenv result FAIL_MMC_WRITE
+                fi
+              else
+                setenv result REFUSED_SECTOR_NOT_EXPECTED
+              fi
+            fi
+          else
+            setenv result REFUSED_BACKUP_SAVE_FAILED
+          fi
+        else
+          setenv result FAIL_READ_SECTOR
+        fi
+      else
+        setenv result FAIL_MMC_DEV
+      fi
+    else
+      setenv result REFUSED_FILE_HASH
+    fi
+  else
+    setenv result FAIL_LOAD_TO
+  fi
+else
+  setenv result FAIL_LOAD_FROM
+fi
+
+setenv a33_stage finished
+env export -t ${e}
+fatwrite mmc 0:1 ${e} a33-sector-status.txt ${filesize}

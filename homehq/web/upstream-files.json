@@ -1,7 +1,7 @@
 {
   "version": 1,
   "repository": "https://github.com/wesbos/photo-frame-dashboard",
-  "revision": "fbe9a30ac4f9c77d3863e19a5e98d9eadb04ab03",
+  "revision": "0c0defb9b7ab978eb1df954a391819ec7c0889da",
   "source_root": "dashboard",
   "files": {
     "css/base.css": {

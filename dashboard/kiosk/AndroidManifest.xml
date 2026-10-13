@@ -3,6 +3,9 @@
     package="com.wesbos.homehq">
 
   <uses-permission android:name="android.permission.INTERNET" />
+  <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+  <!-- Optional; only used if granted with adb (see kiosk README). -->
+  <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
 
   <application
       android:label="Home HQ"
@@ -37,5 +40,18 @@
         <data android:scheme="http" />
       </intent-filter>
     </activity>
+    <!-- Off by default so installing the kiosk doesn't bring up a Home chooser. MainActivity
+         turns it on with the "home" extra; see its class comment. -->
+    <activity-alias
+        android:name=".Home"
+        android:targetActivity=".MainActivity"
+        android:enabled="false"
+        android:exported="true">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+        <category android:name="android.intent.category.HOME" />
+        <category android:name="android.intent.category.DEFAULT" />
+      </intent-filter>
+    </activity-alias>
   </application>
 </manifest>

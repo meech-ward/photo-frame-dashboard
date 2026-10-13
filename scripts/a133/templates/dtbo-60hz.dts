@@ -1,0 +1,15 @@
+/* Overlay for the dtbo entry this unit's U-Boot applies (board_id 3 / dtbo_type 3; check yours in /proc/device-tree).
+   Keeps entry 2's original fragment and adds the LCD pixel clock: 135 -> 143 MHz = 59.93 Hz with ht 2108 x vt 1132.
+   Build: dtc -@ -I dts -O dtb -o dtbo2-60hz.dtb dtbo2-60hz.dts, repack the dtbo table (3 entries), dd it over the dtbo
+   partition (keep the factory dtbo.img for rollback). */
+/dts-v1/;
+/plugin/;
+/ {
+	compatible = "board_manufacturer,board_model";
+	board_id = <0x03>;
+	board_rev = <0x00>;
+	another_hw_information = "some_data";
+	soc_id = <0x68000000>;
+	fragment@0 { target = <&soc>; __overlay__ { dtbo_version = <0x01>; dtbo { compatible = "allwinner,sunxi-dtbo"; dtbo_type = <0x03>; }; }; };
+	fragment@1 { target = <&lcd0>; __overlay__ { lcd_dclk_freq = <143>; }; };
+};

@@ -55,6 +55,8 @@ Settings → About before you follow any guide:
 - **Skylight Calendar 150-CAL** (Rockchip RK3566): start with [next-session.md](docs/next-session.md),
   then [app-analysis.md](docs/app-analysis.md) for the hidden menu. The manufacturer code is
   intentionally not published; the doc shows where the app checks it.
+- **LOOFII C-3 21.5" calendar** (Allwinner A133, Android 10): root ADB over USB out of the box. See
+  [allwinner-a133-loofii-c3.md](docs/allwinner-a133-loofii-c3.md); don't run the Rockchip or A33 scripts on it.
 - **Frameo, Dragon Touch, Joyhong, Uhale, VESWWE, Pastigio and others:** see the
   [device index](docs/devices.md).
 - **Something else:** work through the [phase map](#phase-map), create `docs/<device>.md`, and
@@ -92,6 +94,12 @@ section unless the identity checks match exactly.
 8. **Write notes as you go.** Keep a per-device file in `docs/`, like the ones in the
    [device index](docs/devices.md), with
    observations kept separate from guesses.
+9. **Prove the way back before you close the way in.** Before you disable the app or route your
+   access came through, or end an access session, check by hand on the panel that your kiosk can
+   reach Android Settings → Apps. An `input tap` or `screencap` over ADB does not prove it. A
+   PF1007L was locked out this way; see
+   [the lockout notes](docs/pf1007l-20260410-network-adb.md#6-lockout-after-disabling-aimor-and-offline-recovery). Some
+   builds hide disabled apps in Settings, so keep a second way in, such as persistent ADB.
 
 ### Check for updates, and send back what you find
 
@@ -130,6 +138,13 @@ attempts are useful too.
    with `gh pr create --repo wesbos/photo-frame-dashboard`.
 
 For a PF1007L, include the [report template](docs/pf1007l-start-here.md#report-your-unit).
+
+### Keep a private record of each frame
+
+Keep what you changed on the owner's frame, where the backups are and how to undo it in the
+ignored `frames/` folder, and read it at the start of the next session. Re-check the frame before
+trusting it, and remember that a past approval is not permission for a new write. See
+[frame-records.md](docs/frame-records.md).
 
 ### Phase map
 
