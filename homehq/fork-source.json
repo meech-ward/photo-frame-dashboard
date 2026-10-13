@@ -1,9 +1,8 @@
 {
-  "canonical_repository": "https://github.com/meech-ward/select-badge",
-  "canonical_checkpoint": "45a5852a342d9c5111ee94dbf5d81b4c176bb7c3",
+  "application_repository": "https://github.com/meech-ward/photo-frame-dashboard",
+  "select_setup_guide": "https://badge.select/guides",
   "upstream_revision": "0c0defb9b7ab978eb1df954a391819ec7c0889da",
   "original_dashboard_unchanged": true,
-  "projection": "homehq/ source with external documentation links made absolute; minimal shared Tufty dependencies under homehq/vendor/tufty",
   "tufty_dependency_provenance": "vendor/tufty/provenance.json",
   "chromatic_platform_provenance": "chromatic/tools/mcu-baseline.json"
 }

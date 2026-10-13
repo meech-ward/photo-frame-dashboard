@@ -4,11 +4,16 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import posixpath
+import re
 import subprocess
+from urllib.parse import unquote, urlsplit
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
 HOMEHQ = ROOT / "homehq"
+APP_REPOSITORY = "https://github.com/meech-ward/photo-frame-dashboard"
+SELECT_REPOSITORY = "https://github.com/supabase-community/select-2026-badge"
 
 README = """# Home HQ starter
 
@@ -50,20 +55,16 @@ The Chromatic's public MCU source, minimal platform patch and build recipe are
 documented in homehq/chromatic/README.md. This bundle includes its native source
 and tests, not an ESP32 firmware binary. Tufty shared dependencies are copied
 under homehq/vendor/tufty with source attribution and individual SHA-256 hashes.
-The full SELECT repository's optional browser simulator and firmware instructions are:
-https://github.com/meech-ward/select-badge/tree/main/playground
-https://github.com/meech-ward/select-badge/blob/main/docs/deploy.md
+SELECT setup, firmware and current source links are maintained at:
+https://badge.select/guides
 
 badge/mpy/homehq is the compiled app (format6, pure bytecode, small-int31).
-badge/manifest.json records the pinned toolchain and verified imports/render.
-Its API/compiler baseline is the documented Badgeware3.0.2 runtime; the same
-compiled modules were also accepted by the selected Tufty bw-1.29.0-gc runtime
-(ABI7942). Arbitrary badge firmware needs matching bytecode. A physical install is a separate deliberate development test;
-it must not change the stable production release. The selected development
-Tufty has native HTTPS/private Realtime, photo decode, Auth rotation and radio
-recovery evidence; read the dated record linked from homehq/README.md for measured
-latency and limits. Other devices need their own acceptance. Battery life,
-physical switches and optical glass appearance have not been measured.
+badge/manifest.json records the pinned toolchain and reproducible build hashes.
+Its runtime_verification field records optional simulator checks when supplied;
+null means those checks were not run. The API/compiler baseline is Badgeware
+3.0.2. Install compatible firmware before copying the app, then verify sign-in,
+Realtime and photos on the target device. A successful build alone does not
+verify hardware behavior.
 
 Source and infrastructure are portable; the compiled artifact contains no
 personalization. The weather, appliance controls and usage meters are samples.
@@ -83,19 +84,21 @@ def export(target):
             raise ValueError("private environment file entered Git")
         payload = (ROOT / path).read_bytes()
         if path.endswith(".md"):
-            import re
             parent = Path(path).parent
             def outside_guide(match):
                 target = match.group(1)
                 if ":" in target or not target.startswith("../"):
                     return match.group(0)
-                import posixpath
-                resolved = posixpath.normpath((parent / target).as_posix())
+                link = urlsplit(target)
+                resolved = posixpath.normpath((parent / unquote(link.path)).as_posix())
                 if resolved.startswith("homehq/"):
                     return match.group(0)
-                return "](https://github.com/meech-ward/select-badge/blob/main/" + resolved + ")"
-            # Preserve in-bundle relative guides; route full-repository references
-            # to canonical source so an extracted starter has no broken links.
+                if resolved.startswith("../") or not (ROOT / resolved).exists():
+                    raise ValueError("documentation link leaves the public source tree: " + path + ": " + target)
+                suffix = ("?" + link.query if link.query else "") + ("#" + link.fragment if link.fragment else "")
+                return "](" + APP_REPOSITORY + "/blob/main/" + resolved + suffix + ")"
+            # The ZIP contains homehq/, while the public fork also contains Wes's
+            # guides. Link to those existing files rather than inventing a target.
             payload = re.sub(r"\]\(([^)]+)\)", outside_guide, payload.decode()).encode()
         files[path] = payload
     # Keep shared source in one explicit vendored subtree. A cold fork has none
@@ -113,32 +116,26 @@ def export(target):
         payload = source.read_bytes()
         vendored[relative.as_posix()] = hashlib.sha256(payload).hexdigest()
         files["homehq/vendor/tufty/" + relative.as_posix()] = payload
-    revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
-    provenance = {"repository": "https://github.com/meech-ward/select-badge",
-                  "checkpoint": revision, "files": vendored}
-    # An already-vendored public fork retains its original dependency provenance;
-    # its HEAD identifies the application snapshot, not the shared source origin.
+    # Attribution is authored and verified against the public SELECT export.
+    # An app commit is not a valid replacement for those dependencies' origin.
     existing = HOMEHQ / "vendor" / "tufty" / "provenance.json"
-    if existing.is_file():
-        provenance = json.loads(existing.read_text())
-        if provenance["files"] != vendored:
-            raise ValueError("vendored dependency hashes differ from provenance")
+    if not existing.is_file():
+        raise ValueError("public dependency provenance is missing")
+    provenance = json.loads(existing.read_text())
+    if provenance.get("repository") != SELECT_REPOSITORY:
+        raise ValueError("dependency provenance must reference the public SELECT source")
+    additional = provenance.get("additional_sources", {})
+    if any(source.get("repository") != APP_REPOSITORY for source in additional.values()):
+        raise ValueError("local attribution notes must reference the public application source")
+    if set(provenance.get("source_paths", {})) | set(additional) != set(vendored):
+        raise ValueError("dependency provenance must account for every exported file")
+    if provenance["files"] != vendored:
+        raise ValueError("vendored dependency hashes differ from provenance")
     files["homehq/vendor/tufty/provenance.json"] = (json.dumps(provenance, indent=2) + "\n").encode()
-    files["homehq/vendor/tufty/README.md"] = b"""# Tufty build dependencies
-
-These generic source, font and public certificate files are copied unchanged
-from the SELECT source repository. Original relative paths and SHA-256 hashes
-are in [provenance.json](provenance.json). Font licensing and aiohttp attribution
-remain beside their source. No account, device state or compiled file is included.
-
-The builder uses canonical paths in SELECT and this subtree in a standalone
-fork or starter. Edit app source under `homehq/badge/homehq/`; shared dependency
-changes belong in their source repository. See [BUILD.md](../../BUILD.md).
-"""
     artifact = HOMEHQ / "build" / "standalone"
     manifest = json.loads((artifact / "manifest.json").read_text())
-    if not manifest.get("reproducible") or not manifest.get("runtime_verification"):
-        raise ValueError("build with --verify-runtime before exporting a shareable starter")
+    if not manifest.get("reproducible"):
+        raise ValueError("create a reproducible build before exporting a shareable starter")
     for relative, expected in manifest["files"].items():
         payload = (artifact / relative).read_bytes()
         if hashlib.sha256(payload).hexdigest() != expected:

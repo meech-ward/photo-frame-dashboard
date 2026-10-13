@@ -1,6 +1,33 @@
 {
-  "repository": "https://github.com/meech-ward/select-badge",
-  "checkpoint": "7e5542d98898f86a64aa0485f85995c8b6888f9c",
+  "setup_guide": "https://badge.select/guides",
+  "repository": "https://github.com/supabase-community/select-2026-badge",
+  "checkpoint": "ff92a8484419942f18039bace5663da1c53061b6",
+  "source_paths": {
+    "shared/ui.py": "shared/ui.py",
+    "badgelink/badge/badgelink/verified_tls.py": "lib/verified_tls.py",
+    "network/badge/ws_backoff.py": "lib/ws_backoff.py",
+    "shared/kb_shell.py": "shared/kb_shell.py",
+    "identity/badge/identity/identity_keyboard.py": "apps/setup/identity_keyboard.py",
+    "kbqwerty/badge/kbqwerty/kbqwerty_board.py": "apps/setup/kbqwerty_board.py",
+    "network/vendor/aiohttp/__init__.py": "lib/aiohttp/__init__.py",
+    "network/vendor/aiohttp/aiohttp_ws.py": "lib/aiohttp/aiohttp_ws.py",
+    "badgelink/badge/realtime/__init__.py": "lib/realtime/__init__.py",
+    "badgelink/badge/realtime/client.py": "lib/realtime/client.py",
+    "badgelink/badge/realtime/phoenix.py": "lib/realtime/phoenix.py",
+    "badgelink/badge/badgelink/ca/gts-we1.der": "lib/ca/gts-we1.der",
+    "badgelink/badge/badgelink/ca/gts-root-r4.der": "lib/ca/gts-root-r4.der",
+    "badgelink/badge/badgelink/ca/gts-root-r1.der": "lib/ca/gts-root-r1.der",
+    "assets/fonts/MonaSans-Medium.af": "assets/fonts/MonaSans-Medium.af",
+    "assets/fonts/LICENSE-MonaSans": "assets/fonts/LICENSE-MonaSans"
+  },
+  "additional_sources": {
+    "network/vendor/aiohttp/PROVENANCE.md": {
+      "repository": "https://github.com/meech-ward/photo-frame-dashboard",
+      "checkpoint": "b795f3e6ca056ce7158f2d75e5dbfe7e24b1ac71",
+      "path": "homehq/vendor/tufty/network/vendor/aiohttp/PROVENANCE.md",
+      "description": "Home HQ attribution note for the patched MicroPython aiohttp client; this note is not included in the public SELECT export."
+    }
+  },
   "files": {
     "shared/ui.py": "a902a34862fbaf4d5917865416e1fdaefc90274092a9da65eda5315eeb2f90b7",
     "badgelink/badge/badgelink/verified_tls.py": "7b2f012d04caa23c59619b4a25759a925c5de625c664066feb91fb1689dc984f",

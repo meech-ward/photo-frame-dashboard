@@ -1,12 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import os from 'node:os';
-import {fileURLToPath,pathToFileURL} from 'node:url';
-const repo=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
+import {pathToFileURL} from 'node:url';
 const countdownOnly=process.argv.includes('--countdown-only');
-const [app,out,runtime=path.join(repo,'playground/public/runtime/micropython.mjs'),fonts=path.join(os.homedir(),'.cache/badge-playground/tufty2350/romfs/fonts')]=process.argv.slice(2).filter(arg=>arg!=='--countdown-only');
-if(!app||!out)throw new Error('Usage: node render_native.mjs APP_MPY_DIR OUTPUT_DIR [RUNTIME_MJS] [ROM_FONTS_DIR] [--countdown-only]');
+const [app,out,runtime=process.env.HOMEHQ_RUNTIME,fonts=process.env.HOMEHQ_ROM_FONTS]=process.argv.slice(2).filter(arg=>arg!=='--countdown-only');
+// The optional simulator is supplied by the caller; the public app checkout
+// must not silently depend on another developer's private playground checkout.
+if(!app||!out||!runtime||!fonts)throw new Error('Usage: node render_native.mjs APP_MPY_DIR OUTPUT_DIR RUNTIME_MJS ROM_FONTS_DIR [--countdown-only]. Runtime and fonts may instead use HOMEHQ_RUNTIME and HOMEHQ_ROM_FONTS. See https://badge.select/guides for available simulator/setup guidance.');
 process.argv[1] = 'homehq-polish-render';
 const {loadMicroPython}=await import(pathToFileURL(path.resolve(runtime)).href);
 const logs=[];
