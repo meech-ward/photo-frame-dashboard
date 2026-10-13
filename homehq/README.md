@@ -101,6 +101,11 @@ the physical Tufty acceptance probe also proves capped replacement, real partial
 flash cleanup/retry and native PNG decode. Its measured minimum free space was
 216 KiB with 103 KiB of other state. See [the photo probe](tools/PHOTO-STORAGE-PROBE.md).
 
+The photo renderer retries failed decodes on the next draw and tracks Storage
+content separately from the two reusable filenames, preventing stale decoded
+pixels after slot replacement. [Recovery checks](https://github.com/meech-ward/select-badge/blob/main/benchmark/results/reports/2026-10-12-homehq-photo-recovery.md)
+separate this tested behavior from the pending owner-board diagnosis.
+
 ## Personal Supabase backend
 
 For your own badge, create a fresh **Free Supabase project** in your account and

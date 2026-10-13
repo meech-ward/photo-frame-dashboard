@@ -34,6 +34,7 @@ class HomeView:
         self.face = self.chrome.font
         self.vector = bool(self.chrome.font_size)
         self._photo_path = None
+        self._photo_source = None
         self._photo = None
         # Static rounded shapes are retained: a native shape allocates, and
         # reconstructing decorative geometry every frame adds no information.
@@ -47,6 +48,7 @@ class HomeView:
         # display the previous household's pixels after a new sign-in.
         self._photo = None
         self._photo_path = None
+        self._photo_source = None
 
     def text(self, value, x, y, width, height=22, size=17, ink=INK, align=None):
         screen.font = self.face
@@ -393,9 +395,14 @@ class HomeView:
             self.header(app)
             self.empty("Your next memory.", "Add a photo in the companion.")
             return
-        path = photo_path or (self.root + "/" + row.get("asset", "assets/photo-coast.png"))
-        if path != self._photo_path:
+        path = photo_path or (self.root + "/" + (row.get("asset") or "assets/photo-coast.png"))
+        source = row.get("path")
+        # Two disk slots are reused for different Storage objects. A filename
+        # alone can retain the previous photo's pixels; a failed decode must
+        # also remain retryable when a later frame or download repairs the file.
+        if path != self._photo_path or source != self._photo_source or self._photo is None:
             self._photo_path = path
+            self._photo_source = source
             self._photo = None
             try:
                 self._photo = image.load(path)
