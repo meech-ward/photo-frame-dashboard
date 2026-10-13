@@ -92,6 +92,7 @@ Wes's mock data. Bundled landscape illustrations are labelled sample art.
 ## Check and contribute
 
 ```sh
+python3 homehq/tools/check_public.py
 python3 -m unittest discover -s homehq/tests -q
 python3 homehq/tools/sync_demo.py --check
 node homehq/web/tools/check-upstream.mjs

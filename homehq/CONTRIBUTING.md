@@ -49,3 +49,9 @@ populated environment files, Wi-Fi credentials, refresh tokens, user photos,
 device state, backups, toolchains or generated firmware/bytecode. Preserve vendor
 license notices. The editor is the ordinary way to add household data and photos;
 an operator's private project/account setup is not reusable source.
+
+Run `python3 homehq/tools/check_public.py` before sharing changes. It checks
+tracked files for private source/config paths and missing relative Markdown
+links. Add `--starter path/to/homehq-starter.zip` to check a generated bundle
+too. This offline check complements review of dependency URLs and credentials;
+it does not verify remote availability or establish that arbitrary files are safe.

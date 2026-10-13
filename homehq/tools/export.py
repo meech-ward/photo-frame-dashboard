@@ -143,6 +143,10 @@ def export(target):
         files["badge/" + relative] = payload
     files["badge/manifest.json"] = (artifact / "manifest.json").read_bytes()
     files["README.md"] = README.encode()
+    # Check generated content too: a rewritten link or generated README can
+    # reintroduce an inaccessible dependency even when tracked docs are clean.
+    from check_public import check
+    check(files, "starter contents")
     target.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for name in sorted(files):
