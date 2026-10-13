@@ -10,6 +10,7 @@ import unittest
 from unittest.mock import patch
 
 import hosted
+import check_family
 
 
 class HostedSafety(unittest.TestCase):
@@ -18,22 +19,34 @@ class HostedSafety(unittest.TestCase):
         self.root = Path(self.directory.name)
         self.metadata = self.root / "metadata.private.json"
         self.ref = "abcdefghijklmnopqrst"
-        self.data = {"project_ref": self.ref, "organization_id": hosted.DEVREL,
-                     "project_name": "Home HQ", "plan": "free", "verified_new_project": True}
+        self.data = {"project_ref": self.ref}
         hosted.private_write(self.metadata, self.data)
 
     def tearDown(self):
         self.directory.cleanup()
 
-    def test_wrong_target_and_paid_or_unverified_target_denied(self):
+    def test_wrong_or_missing_target_denied(self):
+        for ref in ("zzzzzzzzzzzzzzzzzzzz", "", None, "../other-project"):
+            with self.subTest(ref=ref), self.assertRaises(hosted.HostedFailure):
+                hosted.verified(self.metadata, ref)
+
+    def test_caller_project_does_not_require_a_specific_organization_or_plan(self):
+        for extra in ({}, {"organization_id": "my-organization", "plan": "pro",
+                           "project_name": "My family", "verified_new_project": False}):
+            hosted.private_write(self.metadata, dict(self.data, **extra))
+            self.assertEqual(hosted.verified(self.metadata, self.ref)["project_ref"], self.ref)
+
+    def test_family_probe_refuses_mismatched_project_before_reading_accounts(self):
         with self.assertRaises(hosted.HostedFailure):
-            hosted.verified(self.metadata, "zzzzzzzzzzzzzzzzzzzz")
-        for key, value in (("organization_id", "another-organization"), ("plan", "pro"),
-                           ("verified_new_project", False), ("project_name", "BadgeLink")):
-            data = dict(self.data); data[key] = value
-            hosted.private_write(self.metadata, data)
-            with self.assertRaises(hosted.HostedFailure):
-                hosted.verified(self.metadata, self.ref)
+            check_family.run(self.root, self.metadata, "zzzzzzzzzzzzzzzzzzzz",
+                             self.root / "missing-owner.private.json")
+
+    def test_family_cli_accepts_and_forwards_the_callers_project(self):
+        arguments = ["check_family.py", "--metadata", str(self.metadata),
+                     "--project-ref", self.ref]
+        with patch.object(check_family.sys, "argv", arguments), patch.object(check_family, "run") as run:
+            self.assertEqual(check_family.main(), 0)
+        self.assertEqual(run.call_args.args[2], self.ref)
 
     def test_private_permissions_and_symlink_are_denied(self):
         self.metadata.chmod(0o644)

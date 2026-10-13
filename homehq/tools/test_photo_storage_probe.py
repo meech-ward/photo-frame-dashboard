@@ -23,8 +23,8 @@ DEFAULT = HERE.parent / 'badge' / 'homehq' / 'transport.py'
 
 def load_probe():
     machine = types.ModuleType('machine')
-    machine.unique_id = lambda: bytes.fromhex('e7e7d70437b93611')
-    namespace = {'HOMEHQ_PHOTO_PROBE_RUN': False, '__name__': 'photo_storage_probe_offline'}
+    machine.unique_id = lambda: bytes.fromhex('0123456789abcdef')
+    namespace = {'HOMEHQ_PHOTO_PROBE_RUN': False, 'HOMEHQ_PROBE_TARGET': 'fedcba9876543210', '__name__': 'photo_storage_probe_offline'}
     with patch.dict(sys.modules, {'machine': machine}):
         exec(compile((HERE / 'photo_storage_probe.py').read_text(), str(HERE / 'photo_storage_probe.py'), 'exec'), namespace)
     return namespace
@@ -130,14 +130,18 @@ class PhotoProbeTests(unittest.TestCase):
         self.assertIn('"stage": "gate"', output.getvalue())
 
     def test_existing_photo_refuses_and_is_never_cleaned(self):
-        existing = self.root / 'homehq-photo-0.png'; existing.write_bytes(b'previous-owned-photo')
         self.probe['gate'] = lambda: {'uid': self.probe['TARGET'], 'runtime_mpy': 7942}
         self.probe['machine'].WDT = lambda timeout: types.SimpleNamespace(feed=lambda: None)
-        output = io.StringIO()
-        with contextlib.redirect_stdout(output), self.assertRaises(RuntimeError):
-            self.probe['main']()
-        self.assertEqual(existing.read_bytes(), b'previous-owned-photo')
-        self.assertEqual(sorted(p.name for p in self.root.iterdir()), ['homehq-photo-0.png'])
+        for suffix in ('.png', '.img', '.img.tmp'):
+            with self.subTest(suffix=suffix):
+                existing = self.root / ('homehq-photo-0' + suffix)
+                existing.write_bytes(b'previous-owned-photo')
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output), self.assertRaises(RuntimeError):
+                    self.probe['main']()
+                self.assertEqual(existing.read_bytes(), b'previous-owned-photo')
+                self.assertEqual(sorted(p.name for p in self.root.iterdir()), [existing.name])
+                existing.unlink()
 
 
 if __name__ == '__main__':

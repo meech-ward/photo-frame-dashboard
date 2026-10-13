@@ -10,12 +10,14 @@ import gc
 import hashlib
 import json
 import machine
+import os
 import time
 import sys
 import badgeware
 
 ROOT = "/system/apps/homehq"
-TARGETS = ("6d9430717fc47ddf", "03bfbc20532aa948")
+# The host chooses a device explicitly; never discover or infer the target.
+TARGET = globals().get("HOMEHQ_PROBE_TARGET")
 
 
 class QuietButtons:
@@ -38,7 +40,9 @@ class QuietButtons:
 
 def main(options):
     uid = binascii.hexlify(machine.unique_id()).decode().lower()
-    if uid not in TARGETS or options.get("uid") != uid or sys.implementation._mpy != 7942:
+    if not TARGET or uid != TARGET or options.get("uid") != uid:
+        raise RuntimeError("Supply HOMEHQ_PROBE_TARGET and matching uid for the selected Tufty")
+    if "tufty" not in os.uname().machine.lower() or sys.implementation._mpy != 7942:
         raise RuntimeError("JPEG probe requires the explicitly selected compatible Tufty")
     if ROOT in sys.modules:
         raise RuntimeError("JPEG probe requires a fresh REPL")

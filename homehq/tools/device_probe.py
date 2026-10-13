@@ -15,8 +15,8 @@ import time
 import machine
 
 ROOT = "/system/apps/homehq"
-TARGET = "6d9430717fc47ddf"
-OTHER_PICO = "e7e7d70437b93611"
+# The host chooses a device explicitly; never discover or infer the target.
+TARGET = globals().get("HOMEHQ_PROBE_TARGET")
 RUNTIME_MPY = 7942
 PAGES = ("today", "calendar", "chores", "shopping", "photos", "home", "agents")
 CAPTURE = "/state/homehq-probe.rgba"
@@ -39,8 +39,10 @@ def tagged(phase, values):
 
 def gate():
     uid = binascii.hexlify(machine.unique_id()).decode().lower()
-    if uid == OTHER_PICO or uid != TARGET:
+    if not TARGET or uid != TARGET:
         raise RuntimeError("Refusing a device other than the selected Tufty")
+    if "tufty" not in os.uname().machine.lower():
+        raise RuntimeError("A Tufty badge is required")
     if sys.implementation._mpy != RUNTIME_MPY:
         raise RuntimeError("Unexpected firmware bytecode ABI")
     if ROOT in sys.modules:

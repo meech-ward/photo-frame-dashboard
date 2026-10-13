@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deploy only the root-verified new, free DevRel Home HQ project.
+"""Deploy an explicitly selected Home HQ project.
 
 This tool never creates, upgrades, links, or lists projects. Management commands
 use the existing CLI login, while the demo uses ordinary password Auth only.
@@ -21,7 +21,6 @@ import urllib.request
 import uuid
 
 VERSION = "2.120.0"
-DEVREL = "yuueonycfgiwijatkqyv"
 
 
 class HostedFailure(Exception):
@@ -51,9 +50,8 @@ def verified(path, project_ref):
     data = private_read(path)
     if not re.fullmatch(r"[a-z]{20}", project_ref or "") or data.get("project_ref") != project_ref:
         raise HostedFailure("explicit project reference must match verified metadata")
-    if (data.get("organization_id") != DEVREL or data.get("plan") != "free"
-            or data.get("verified_new_project") is not True or data.get("project_name") != "Home HQ"):
-        raise HostedFailure("target must be the verified new free DevRel Home HQ project")
+    # Require the same explicit target in the command and private metadata so a
+    # saved CLI login or linked checkout cannot silently select another project.
     data["url"] = "https://" + project_ref + ".supabase.co"
     return data
 

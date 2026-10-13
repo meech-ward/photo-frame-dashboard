@@ -14,8 +14,8 @@ import time
 import machine
 
 ROOT = "/system/apps/homehq"
-TARGET = "6d9430717fc47ddf"
-EXCLUDED_PICO = "e7e7d70437b93611"
+# The host chooses a device explicitly; never discover or infer the target.
+TARGET = globals().get("HOMEHQ_PROBE_TARGET")
 RUNTIME_MPY = 7942
 MODULE_COUNT = 20
 _watchdog = None
@@ -28,8 +28,10 @@ def feed():
 
 def gate():
     uid = binascii.hexlify(machine.unique_id()).decode().lower()
-    if uid == EXCLUDED_PICO or uid != TARGET:
+    if not TARGET or uid != TARGET:
         raise RuntimeError("Auth probe refuses this device")
+    if "tufty" not in os.uname().machine.lower():
+        raise RuntimeError("A Tufty badge is required")
     if sys.implementation._mpy != RUNTIME_MPY or ROOT in sys.modules:
         raise RuntimeError("Auth probe requires matching firmware and a fresh REPL")
     count = 0
@@ -51,7 +53,7 @@ def gate():
                 count += 1
     if count != MODULE_COUNT:
         raise RuntimeError("Installed Auth module count mismatch")
-    return {"selected_tufty": True, "pico_excluded": True, "runtime_mpy": RUNTIME_MPY, "modules": count}
+    return {"selected_tufty": True, "runtime_mpy": RUNTIME_MPY, "modules": count}
 
 
 def read_private(path):
@@ -110,6 +112,7 @@ class QuietButtons:
 
 def main(options):
     global _watchdog
+    gate_record = gate()
     # Stable boot's armed watchdog survives raw-REPL resets. Feed it while this
     # probe temporarily replaces the normal Badgeware loop and serial capture.
     _watchdog = machine.WDT(timeout=16000)
@@ -122,7 +125,7 @@ def main(options):
         records.append(values)
         feed()
         print("HOMEHQ_AUTH_PROBE " + json.dumps(values))
-    record("gate", **gate())
+    record("gate", **gate_record)
     mode = options.get("mode", "switch")
     if mode not in ("switch", "restore") or options.get("capture", "none") not in ("none", "stream"):
         raise ValueError("Unsupported Auth probe option")

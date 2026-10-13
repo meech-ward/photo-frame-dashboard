@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check four real hosted protocol clients using the canonical badge transport.
 
-Only the verified new DevRel Free Home HQ project is accepted. Four fresh normal
+The explicit project reference must match private metadata. Four fresh normal
 sign-ins share its private household channel; --member-files checks four distinct
 linked accounts. Saved badge/browser sessions are never consumed. The temporary
 g2 desired-state edits are versioned/restored in default mode; member mode uses
@@ -21,7 +21,6 @@ import uuid
 from hosted import API, HostedFailure, private_read, signin, verified
 
 
-PROJECT_REF = "cicgysjddsjsbgofpxwr"
 SECTIONS = ("people", "events", "chores", "shopping", "photos", "agents", "devices")
 
 
@@ -184,16 +183,16 @@ class Family:
         return failed
 
 
-def run(root, metadata, owner_file, report_path=None, member_files=None):
-    data = verified(metadata, PROJECT_REF)
+def run(root, metadata, project_ref, owner_file, report_path=None, member_files=None):
+    data = verified(metadata, project_ref)
     owner = private_read(owner_file)
-    require(owner.get("project_ref") == PROJECT_REF and owner.get("url") == data["url"],
+    require(owner.get("project_ref") == project_ref and owner.get("url") == data["url"],
             "ordinary demo owner belongs to another project")
     records = [owner] * 4
     if member_files:
         require(len(member_files) == 3, "provide exactly three private member account files")
         records = [owner] + [private_read(path) for path in member_files]
-        require(all(record.get("project_ref") == PROJECT_REF
+        require(all(record.get("project_ref") == project_ref
                     and record.get("url", data["url"]) == data["url"]
                     and isinstance(record.get("email"), str) and isinstance(record.get("password"), str)
                     and record["email"] and record["password"] for record in records),
@@ -207,7 +206,7 @@ def run(root, metadata, owner_file, report_path=None, member_files=None):
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     report = {"schema_version": 1, "kind": "four_hosted_protocol_clients", "physical_badges": 0,
-              "project_ref": PROJECT_REF, "transport_sha256": hashlib.sha256(
+              "project_ref": project_ref, "transport_sha256": hashlib.sha256(
                   (root / "badge" / "homehq" / "transport.py").read_bytes()).hexdigest(), "phases": []}
     cleanup_failed = False
     try:
@@ -379,14 +378,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--homehq-root", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--metadata", type=Path, required=True)
-    parser.add_argument("--project-ref", required=True, choices=(PROJECT_REF,))
+    parser.add_argument("--project-ref", required=True)
     parser.add_argument("--owner-file", type=Path)
     parser.add_argument("--member-files", type=Path, nargs=3,
                         help="Three mode-0600 records for existing linked member email/password accounts")
     parser.add_argument("--report", type=Path, help="credential-free counts and latency JSON")
     args = parser.parse_args()
     try:
-        run(args.homehq_root.resolve(), args.metadata,
+        run(args.homehq_root.resolve(), args.metadata, args.project_ref,
             args.owner_file or args.metadata.parent / ".hosted.owner.private.json", args.report, args.member_files)
         return 0
     except HostedFailure as error:

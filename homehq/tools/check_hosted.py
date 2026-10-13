@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise only the verified new Home HQ project's ordinary demo owner.
+"""Exercise the explicitly selected Home HQ project's ordinary demo owner.
 
 No admin key, signup, project discovery, home reset, or other owner's writes.
 The probe restores its temporary checklist edit and deletes its uploaded PNG.

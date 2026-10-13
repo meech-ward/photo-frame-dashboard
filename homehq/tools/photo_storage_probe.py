@@ -18,8 +18,8 @@ import time
 
 ROOT = "/system/apps/homehq"
 STATE = "/state"
-TARGET = "6d9430717fc47ddf"
-OTHER_PICO = "e7e7d70437b93611"
+# The host chooses a device explicitly; never discover or infer the target.
+TARGET = globals().get("HOMEHQ_PROBE_TARGET")
 RUNTIME_MPY = 7942
 CAP = 327680
 OTHER_STATE_MIN = 103 * 1024
@@ -88,7 +88,8 @@ def state_hashes(excluded):
 
 def gate():
     uid = binascii.hexlify(machine.unique_id()).decode().lower()
-    require(uid == TARGET and uid != OTHER_PICO, "Refusing another device")
+    require(bool(TARGET) and uid == TARGET, "Supply HOMEHQ_PROBE_TARGET for the selected device")
+    require("tufty" in os.uname().machine.lower(), "A Tufty badge is required")
     require(sys.implementation._mpy == RUNTIME_MPY, "Unexpected bytecode ABI")
     require("transport" not in sys.modules and "view" not in sys.modules,
             "Use a fresh raw REPL")
@@ -151,6 +152,9 @@ class FilesystemMonitor:
         self.real_os = real_os
         self.real_open = real_open
         self.slots = slots
+        # The current transport removes either old PNG or new format-neutral
+        # cache files before replacement. Monitor the same two slot identities.
+        self.cache_paths = slots + tuple(slot[:-4] + ".img" for slot in slots)
         self.records = records
         self.peak_photo_bytes = 0
         self.minimum_free = free_bytes()
@@ -159,7 +163,7 @@ class FilesystemMonitor:
 
     def sample(self):
         total = 0
-        for slot in self.slots:
+        for slot in self.cache_paths:
             for path in (slot, slot + ".tmp"):
                 if exists(path):
                     total += self.real_os.stat(path)[6]
@@ -170,7 +174,7 @@ class FilesystemMonitor:
         feed()
 
     def remove(self, path):
-        require(path in self.slots or path in [slot + ".tmp" for slot in self.slots], "Unowned deletion attempted")
+        require(path in self.cache_paths or path in [slot + ".tmp" for slot in self.cache_paths], "Unowned deletion attempted")
         self.real_os.remove(path)
         self.sample()
 
@@ -230,6 +234,7 @@ def offline_transport(module, http):
     result = ProbeTransport()
     result.http = http
     result.key = "offline-probe"
+    result.home_id = "probe"
     result.session = {"user_id": "probe", "access_token": "offline-probe"}
     result._photo_active = None
     result._photos = []
@@ -329,7 +334,8 @@ def main():
         feed()
         slots = (STATE + "/homehq-photo-0.png", STATE + "/homehq-photo-1.png")
         reserve = STATE + "/homehq-photo-probe-reserve.bin"
-        candidates = list(slots) + [slot + ".tmp" for slot in slots] + [reserve]
+        cache_paths = slots + tuple(slot[:-4] + ".img" for slot in slots)
+        candidates = list(cache_paths) + [slot + ".tmp" for slot in cache_paths] + [reserve]
         require(not any(exists(path) for path in candidates), "Existing photo slots or probe file; refusing overwrite")
         baseline = state_hashes(candidates)
         other_bytes = sum(row[0] for row in baseline.values())
