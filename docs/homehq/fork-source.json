@@ -1,0 +1,8 @@
+{
+  "application_repository": "https://github.com/meech-ward/photo-frame-dashboard",
+  "select_setup_guide": "https://badge.select/guides",
+  "upstream_revision": "0c0defb9b7ab978eb1df954a391819ec7c0889da",
+  "original_dashboard_unchanged": false,
+  "tufty_dependency_provenance": "devices/badge/vendor/provenance.json",
+  "chromatic_platform_provenance": "devices/chromatic/tools/mcu-baseline.json"
+}

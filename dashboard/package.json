@@ -1,16 +1,26 @@
 {
   "name": "home-dashboard",
-  "private": true,
   "version": "0.1.0",
+  "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "build": "npm run typecheck && vite build",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
     "preview": "vite preview",
-    "deploy": "vite build && wrangler deploy"
+    "deploy": "npm run build && wrangler deploy"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "2.112.3"
   },
   "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@types/node": "26.2.0",
+    "typescript": "6.0.3",
     "vite": "^8.3.1",
+    "vitest": "4.1.11",
     "wrangler": "^4.145.0"
   }
 }

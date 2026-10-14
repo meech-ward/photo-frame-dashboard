@@ -225,7 +225,8 @@
     if ((t = e.target.closest('[data-more]'))) return moreSheet(t.dataset.more.split(','));
     if ((t = e.target.closest('[data-nav]'))) return nav(+t.dataset.nav);
     if ((t = e.target.closest('[data-today]'))) { V.date = App.dayStart(App.now()); if (V.mode === 'month') V.date.setDate(1); V.scroll = null; return render(); }
-    if ((t = e.target.closest('[data-mode]'))) {
+    // The stage also has data-mode; only a calendar mode button is an action.
+    if ((t = e.target.closest('button[data-mode]'))) {
       V.mode = t.dataset.mode;
       if (V.mode === 'month') V.date = new Date(V.date.getFullYear(), V.date.getMonth(), 1);
       V.scroll = null;
@@ -310,10 +311,10 @@
           if (!t) return;
           if (t.dataset.idea) { input.value = t.dataset.idea; }
           if (t.dataset.who) {
-            if (t.dataset.who === 'all') st.who = st.who.length === 4 ? [] : D.ALL.slice();
+            if (t.dataset.who === 'all') st.who = st.who.length === D.people.length ? [] : D.ALL.slice();
             else { var i = st.who.indexOf(t.dataset.who); if (i > -1) st.who.splice(i, 1); else st.who.push(t.dataset.who); }
             App.$$('[data-who]', s).forEach(function (b) {
-              b.classList.toggle('is-on', b.dataset.who === 'all' ? st.who.length === 4 : st.who.indexOf(b.dataset.who) > -1);
+              b.classList.toggle('is-on', b.dataset.who === 'all' ? st.who.length === D.people.length : st.who.indexOf(b.dataset.who) > -1);
             });
           }
           ['dayi', 'time', 'dur'].forEach(function (k) {
@@ -324,10 +325,19 @@
           });
           if (t.hasAttribute('data-save')) {
             var title = input.value.trim() || 'New event';
-            var who = st.who.length ? st.who.slice() : ['jordan'];
+            var who = st.who.length ? st.who.slice() : [D.people[0].id];
             var start = App.addDays(App.dayStart(now), st.day), p = st.time.split(':');
             start.setHours(+p[0], +p[1]);
             var e = { id: D._eid(), title: title, people: who, start: start, end: new Date(+start + st.dur * 60000) };
+            if (App.dataSource) {
+              t.disabled = true;
+              // Keep Wes's event sheet open on a rejected write so the typed
+              // plan is recoverable; the server snapshot replaces DATA on success.
+              App.dataSource.saveEvent(e).then(function (saved) {
+                if (saved) { close(); V.date = App.dayStart(start); V.mode = V.mode === 'month' ? 'day' : V.mode; render(); }
+              }).finally(function () { t.disabled = false; });
+              return;
+            }
             D.events.push(e);
             close();
             V.date = App.dayStart(start); V.mode = V.mode === 'month' ? 'day' : V.mode; V.scroll = null;

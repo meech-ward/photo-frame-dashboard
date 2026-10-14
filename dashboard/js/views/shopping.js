@@ -139,6 +139,13 @@
 
   function add(name) {
     name = name.trim();
+    if (App.dataSource) {
+      App.dataSource.addShopping(name, V.store);
+      V.query = '';
+      V.el.querySelector('.s-input').value = '';
+      paintSuggest();
+      return;
+    }
     var g = find(name, false), msg;
     if (g) {
       g.qty++;
@@ -167,6 +174,7 @@
   }
 
   function check(g) {
+    if (App.dataSource) return App.dataSource.setDone('shopping', g.id, true);
     V.pending[g.id] = true;
     var rowEl = V.el.querySelector('[data-id="' + g.id + '"]');
     rowEl.classList.add('is-checking');
@@ -202,6 +210,7 @@
     }
     if ((t = e.target.closest('[data-qty]'))) {
       var q = D.groceries.filter(function (x) { return x.id === t.dataset.id; })[0];
+      if (App.dataSource) return App.dataSource.quantityShopping(q.id, Math.max(1, q.qty + +t.dataset.qty));
       q.qty = Math.max(1, q.qty + +t.dataset.qty);
       t.parentNode.querySelector('.num').textContent = q.qty;
       refreshSuggestFor(q);
@@ -212,11 +221,13 @@
     if ((t = e.target.closest('[data-drawer]'))) { V.drawer = !V.drawer; return paintList(); }
     if ((t = e.target.closest('[data-revive]'))) {
       var r = D.groceries.filter(function (x) { return x.id === t.dataset.revive; })[0];
+      if (App.dataSource) return App.dataSource.setDone('shopping', r.id, false);
       r.done = false; paintList(); paintSuggest(); App.emit('data');
       return App.toast('Added back <b>' + App.esc(r.name) + '</b>', { icon: 'cart', ms: 2500 });
     }
     if ((t = e.target.closest('[data-clear]'))) {
       var gone = done();
+      if (App.dataSource) return App.dataSource.clearShopping(gone.map(function (g) { return g.id; }));
       D.groceries = D.groceries.filter(function (x) { return gone.indexOf(x) < 0; });
       V.drawer = false;
       paintList();

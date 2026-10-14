@@ -58,6 +58,18 @@
     // deploy, or a network blip), reload until it starts.
     setTimeout(function () { if (!window.App) location.reload(); }, 10000);
   </script>
-  <script type="module" src="/js/main.js"></script>
+  <script type="module" src="/src/dashboard.ts"></script>
+  <div id="homehq-toolbar">
+    <span id="homehq-status" role="status">Connecting</span>
+    <small>Weather, devices &amp; usage: samples</small>
+    <a href="/settings.html">Settings</a>
+  </div>
+  <div id="homehq-gate" hidden>
+    <div>
+      <h1>Home HQ</h1>
+      <p id="homehq-gate-message">Connecting to your household.</p>
+      <a href="/settings.html">Sign in</a>
+    </div>
+  </div>
 </body>
 </html>

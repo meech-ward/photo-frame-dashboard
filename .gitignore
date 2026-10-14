@@ -20,3 +20,19 @@ scripts/si006-webview-overlay/build/
 
 # Private per-frame records (docs/frame-records.md). No trailing slash, so a symlink is ignored too.
 /frames
+
+# Home HQ local development, generated artifacts and device credentials.
+node_modules/
+dist/
+/build/
+/.private/
+test-results/
+playwright-report/
+/.tools/
+/.supabase-home/
+*.private.*
+.env*
+!.env.example
+/.supabase/
+/supabase/.temp/
+/supabase/.branches/

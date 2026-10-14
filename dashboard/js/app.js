@@ -6,6 +6,12 @@
   var $ = App.$ = function (s, r) { return (r || document).querySelector(s); };
   App.$$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
 
+  // Optional persistence boundary. Views call these actions before changing DATA;
+  // the connected provider publishes authoritative state only after a successful save.
+  // Without a provider this remains the original, self-contained local prototype.
+  App.dataSource = null;
+  App.started = false;
+
   // ------------------------------------------------------------ events
   var handlers = {};
   App.on = function (e, fn) { (handlers[e] = handlers[e] || []).push(fn); };
@@ -13,7 +19,7 @@
 
   // ------------------------------------------------------------ time (demo clock)
   var offset = 0;
-  App.now = function () { return new Date(Date.now() + offset); };
+  App.now = function () { return App.dataSource ? App.dataSource.now() : new Date(Date.now() + offset); };
   App.setTime = function (h, m) {
     if (h == null) offset = 0;
     else { var d = new Date(); d.setHours(h, m, 0, 0); offset = d - Date.now(); }
@@ -327,7 +333,9 @@
 
   // ------------------------------------------------------------ boot
   App.start = function () {
-    App.setTime(15, 18); // demo default: a busy weekday afternoon
+    if (App.started || (App.dataSource && !App.dataSource.ready())) return;
+    App.started = true;
+    App.setTime(App.dataSource ? null : 15, 18); // demo default: a busy weekday afternoon
     fit();
     window.addEventListener('resize', fit);
     // Switch tabs the instant a finger lands (pointerdown), not on release. Keyboard "clicks"
@@ -347,7 +355,7 @@
     setInterval(tick, 1000);
     App.emit('ready');
     refreshStale(1500);
-    setTimeout(function () { App.toast('Tip: press and hold the <b>clock</b> in the sidebar for demo controls', { ms: 6000, icon: 'bolt' }); }, 1200);
+    if (!App.dataSource) setTimeout(function () { App.toast('Tip: press and hold the <b>clock</b> in the sidebar for demo controls', { ms: 6000, icon: 'bolt' }); }, 1200);
   };
   document.addEventListener('DOMContentLoaded', function () { App.start(); });
 })();

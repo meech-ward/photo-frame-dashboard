@@ -8,6 +8,7 @@
 
   // Optimistic device update: flip immediately, confirm (or revert) shortly after.
   App.setDevice = function (id, patch, opts) {
+    if (App.dataSource) return App.dataSource.setDevice(id, patch);
     var d = dev(id), before = {};
     Object.keys(patch).forEach(function (k) { before[k] = d[k]; d[k] = patch[k]; });
     V.pending[id] = true;
@@ -229,6 +230,7 @@
 
           if (knob._x >= knob._max - 6) {
             close();
+            if (App.dataSource) return App.setDevice(g.id, { state: opening ? 'open' : 'closed' });
             g.state = opening ? 'opening' : 'closing';
             V.scene = null;
             changed(['g-door']);
@@ -258,12 +260,14 @@
         bindTiles(box);
         var off = s.querySelector('[data-alloff]'), lk = s.querySelector('[data-lockall]');
         if (off) off.onclick = function () {
+          if (App.dataSource) { close(); return App.dataSource.bulkDevices('lights'); }
           var prev = D.devices.filter(function (d) { return d.type === 'light' && d.on; });
           prev.forEach(function (d) { d.on = false; });
           close(); changed(prev.map(function (d) { return d.id; }));
           App.toast('Turned off ' + prev.length + ' lights', { icon: 'bulb', undo: function () { prev.forEach(function (d) { d.on = true; }); changed(prev.map(function (d) { return d.id; })); } });
         };
         if (lk) lk.onclick = function () {
+          if (App.dataSource) { close(); return App.dataSource.bulkDevices('locks'); }
           var locks = D.devices.filter(function (d) { return d.type === 'lock'; });
           locks.forEach(function (d) { d.locked = true; });
           close(); changed(locks.map(function (d) { return d.id; }));

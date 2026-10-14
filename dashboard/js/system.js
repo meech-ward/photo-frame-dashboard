@@ -3,7 +3,11 @@
   'use strict';
   var D = window.DATA, $ = App.$;
 
-  function img(seed, w, h) { return 'https://picsum.photos/seed/' + seed + '/' + w + '/' + h; }
+  function img(seed, w, h) {
+    var photo = D.photos.find(function (p) { return p.seed === seed; });
+    if (photo && photo.src) return photo.src;
+    return App.dataSource ? '/sample-coast.svg' : 'https://picsum.photos/seed/' + seed + '/' + w + '/' + h;
+  }
   App.img = img;
 
   // ------------------------------------------------------------ full-screen takeovers
@@ -133,6 +137,7 @@
       '</div>';
   }
   App.openDemo = function () {
+    if (App.dataSource) { location.assign('/settings.html'); return; }
     var el = $('#demo');
     el.innerHTML = demoHTML();
     el.classList.add('is-open');

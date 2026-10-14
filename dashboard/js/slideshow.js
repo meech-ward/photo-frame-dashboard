@@ -12,6 +12,7 @@
 
   function parseDate(p) { var a = p.date.split('-'); return new Date(+a[0], +a[1] - 1, +a[2]); }
   App.photoMeta = function (p) {
+    if (!p.date || p.sample) return { date: App.esc(p.caption || 'Family photo'), monthYear: App.esc(p.caption || 'Family photo'), kicker: p.sample ? 'Sample artwork' : 'Your private photo', onThisDay: false, place: p.place, from: D.family };
     var d = parseDate(p), now = App.now();
     var years = now.getFullYear() - d.getFullYear();
     var onThisDay = d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
@@ -86,7 +87,14 @@
     for (var i = 0; i < this.queue.length; i++) if (!pred || pred(this.queue[i])) return this.queue.splice(i, 1)[0];
     return null;
   };
+  S.syncPhotos = function () {
+    // A bucket URL can expire or a photo can be removed between visits. Never
+    // keep obsolete descriptors in a slideshow's queued or previous slides.
+    var generation = D.photos.map(function (p) { return p.id + ':' + (p.src || p.seed); }).join('|');
+    if (generation !== this.generation) { this.current = null; this.queue = []; this.history = []; this.generation = generation; }
+  };
   S.pick = function () {
+    this.syncPhotos();
     var layout = this.o.layout, n = this.count++;
     var first = this.take();
     if (!first) return null;
@@ -98,6 +106,8 @@
       if (first.o === 'p') layout = D.photos.some(function (x) { return x !== first && x.tag === first.tag; }) ? 'pair' : 'polaroid';
       else layout = n % 5 === 3 ? 'collage' : n % 5 === 4 ? 'polaroid' : 'cover';
     }
+    // Newly created households need valid layouts even with one photo.
+    if ((layout === 'collage' && D.photos.length < 3) || (layout === 'pair' && D.photos.filter(function (p) { return p.o === 'p'; }).length < 2)) layout = 'cover';
     var ps = [first];
     if (layout === 'pair') {
       if (first.o !== 'p') { first = sibling(function (x) { return x.o === 'p'; }); ps = [first]; }
@@ -154,6 +164,6 @@
     clearInterval(this.timer);
     this.timer = setInterval(function () { self.next(); }, this.o.interval);
   };
-  S.start = function () { if (!this.current) this.next(); else this.restart(); };
+  S.start = function () { this.syncPhotos(); if (!this.current) this.next(); else this.restart(); };
   S.stop = function () { clearInterval(this.timer); this.timer = null; };
 })();

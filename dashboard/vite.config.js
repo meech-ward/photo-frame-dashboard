@@ -1,4 +1,5 @@
 import { defineConfig } from 'vite';
+import { resolve } from 'node:path';
 
 // The wall tablet runs Android WebView 106 — keep JS output within Chromium 106.
 // CSS targets chrome61 on purpose: the tablet's WebView rejects 4/8-digit hex colours (#0000,
@@ -8,6 +9,7 @@ export default defineConfig({
   build: {
     target: 'chrome106',
     cssTarget: 'chrome61',
+    rollupOptions: { input: { dashboard: resolve(import.meta.dirname, 'index.html'), settings: resolve(import.meta.dirname, 'settings.html') } },
   },
   server: { host: true },
 });

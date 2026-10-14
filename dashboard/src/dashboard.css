@@ -1,0 +1,71 @@
+/* Only the integration controls live here. Wes's presentation stays in css/. */
+#homehq-toolbar {
+  position: fixed;
+  z-index: 100;
+  right: 12px;
+  bottom: 10px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 9px 13px;
+  border-radius: 10px;
+  background: #f2eee6ee;
+  box-shadow: 0 1px 8px #0002;
+  font:
+    13px Archivo,
+    sans-serif;
+  color: #111;
+}
+#homehq-toolbar a,
+#homehq-gate a {
+  color: inherit;
+  font-weight: 700;
+}
+#homehq-toolbar small {
+  font-size: 11px;
+  color: #625f59;
+}
+#homehq-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 101;
+  display: grid;
+  place-items: center;
+  background: #f2eee6;
+  font-family: Archivo, sans-serif;
+}
+#homehq-gate[hidden] {
+  display: none;
+}
+#homehq-gate h1 {
+  font:
+    56px "Instrument Serif",
+    serif;
+  margin: 0;
+}
+#homehq-gate p {
+  max-width: 400px;
+  line-height: 1.5;
+}
+body[data-homehq-live] #railClock {
+  pointer-events: none;
+}
+body[data-homehq-live] .hc-climate,
+body[data-homehq-live] .hc-cams,
+body[data-homehq-live] .hc-media,
+body[data-homehq-live] [data-sum="climate"],
+body[data-homehq-live] [data-sum="media"],
+body[data-homehq-live] [data-fav] {
+  display: none;
+}
+body[data-homehq-live] .hc {
+  grid-template-columns: 1fr;
+}
+body[data-homehq-live] .hc-sum {
+  grid-template-columns: repeat(2, 1fr);
+}
+@media (max-width: 700px) {
+  #homehq-toolbar small {
+    display: none;
+  }
+}

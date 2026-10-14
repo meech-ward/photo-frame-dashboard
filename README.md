@@ -1,8 +1,62 @@
-# Taking over Android photo frames
+# Family dashboard with Supabase and native devices
 
-> **Home HQ fork:** For the Supabase household dashboard and native Tufty and
-> Chromatic clients, start with [HOMEHQ.md](HOMEHQ.md), including when using an agent.
-> Wes's original Android frame guides continue below.
+This fork extends [Wes Bos’s photo-frame dashboard](https://github.com/wesbos/photo-frame-dashboard)
+with one Supabase household shared by the web dashboard, SELECT badges and a
+ModRetro Chromatic. It uses Wes’s existing screens and styles; account and household
+settings are added alongside them. The original Android frame tools and guides
+remain below.
+
+## Run the dashboard
+
+Use Node 22.12 or newer. From the repository root:
+
+```sh
+npm --prefix dashboard ci
+cp dashboard/.env.example dashboard/.env.local
+# Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY in that file.
+npm --prefix dashboard run dev
+```
+
+Open the Local URL printed by Vite. Sign in and use **Settings** to manage the
+household, member accounts and photos. Each badge signs in separately with its
+member’s email and password. With no environment configuration, the dashboard
+shows Wes’s clearly labelled local sample; those edits do not sync to devices.
+
+For a fresh project, follow [Supabase setup](docs/homehq/backend.md) first.
+Only the public project URL and publishable key belong in the web environment.
+For hosting, build with `npm --prefix dashboard run build` and publish
+`dashboard/dist/`; configure your hosted Auth origins as described in the
+[web guide](dashboard/README.md).
+
+## Project layout
+
+| Directory | Purpose |
+| --- | --- |
+| [`dashboard/`](dashboard/) | Wes’s web UI with Supabase data and focused household settings |
+| [`supabase/`](supabase/) | Configuration, declarative schema, migrations and database tests |
+| [`devices/badge/`](devices/badge/README.md) | Native SELECT/Tufty app and its minimal attributed dependencies |
+| [`devices/chromatic/`](devices/chromatic/README.md) | Native Chromatic app and public MCU platform integration |
+| [`fixtures/`](fixtures/) | Shared sample household |
+| [`tools/`](tools/) | Build, provisioning and optional development checks |
+| [`docs/homehq/`](docs/homehq/README.md) | Architecture, development, data contract and backend setup |
+
+The browser uses larger, aspect-preserving photos and the full household calendar.
+Native devices receive separate small image variants and bounded data responses.
+Existing badge sessions and the device API continue to work after a backend upgrade.
+Uploaded small images from an earlier version need re-uploading to gain a larger web copy.
+
+Start at [badge.select/guides](https://badge.select/guides) for SELECT firmware
+and setup, then follow the [badge app installation](devices/badge/README.md).
+The Chromatic uses its ESP32 display overlay, not a Game Boy cartridge ROM.
+Weather, agent meters and home-control readings remain labelled samples.
+
+For source changes or another device port, read the
+[development map](docs/homehq/README.md). For an upstream contribution, see
+[contributing](docs/homehq/contributing.md).
+
+---
+
+# Taking over Android photo frames
 
 Turn a cheap Android photo frame into a family dashboard: unlock it, root it, replace the vendor app, and run your own web page full screen.
 
@@ -68,8 +122,9 @@ Settings → About before you follow any guide:
 
 ## The dashboard
 
-[`dashboard/`](dashboard) is the family dashboard we run on the BIUFRAME (it uses mock data): a Vite
-web app deployed to Cloudflare Workers. `dashboard/kiosk/` is a small full-screen WebView Android app,
+[`dashboard/`](dashboard) is Wes’s Vite family dashboard, extended in this fork with optional Supabase
+persistence. It can run the original local sample or a connected household and
+can be deployed to Cloudflare Workers. `dashboard/kiosk/` is a small full-screen WebView Android app,
 built without Gradle, that shows it. Hold two fingers still for 1.5 s to open a menu for the
 launcher, Android settings, and reloading. On frames without system navigation, optional floating
 **Back** and **Dashboard** buttons help; see the [kiosk guide](dashboard/kiosk/README.md).

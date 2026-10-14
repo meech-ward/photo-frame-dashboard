@@ -1,0 +1,267 @@
+/* Settings share the dashboard's type and colours; the display remains Wes's UI. */
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: #f2eee6;
+  color: #151515;
+  font:
+    16px/1.55 Archivo,
+    sans-serif;
+}
+#app {
+  max-width: 980px;
+  margin: auto;
+  padding: 32px 24px 72px;
+}
+header,
+.section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+}
+a {
+  color: inherit;
+}
+header a {
+  text-decoration: none;
+  font-weight: 600;
+}
+h1 {
+  font:
+    64px/1.1 "Instrument Serif",
+    serif;
+  margin: 42px 0 12px;
+}
+h2 {
+  font:
+    34px/1.15 "Instrument Serif",
+    serif;
+  margin: 0 0 14px;
+}
+h3 {
+  margin: 28px 0 10px;
+}
+.lead {
+  font-size: 18px;
+  color: #625f59;
+  margin-bottom: 36px;
+}
+section {
+  border-top: 1px solid #d7d2c8;
+  padding: 28px 0;
+}
+#settings-status {
+  font-size: 13px;
+  color: #625f59;
+}
+.button,
+button {
+  border: 1px solid #c9c3b8;
+  background: transparent;
+  color: inherit;
+  border-radius: 8px;
+  padding: 10px 15px;
+  font:
+    600 14px Archivo,
+    sans-serif;
+  cursor: pointer;
+}
+button:hover {
+  background: #e8e2d8;
+}
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+a:focus-visible {
+  outline: 3px solid #2d5bff;
+  outline-offset: 3px;
+}
+.solid {
+  background: #151515;
+  color: #fff;
+  border-color: #151515;
+}
+.solid:hover {
+  background: #383838;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+.danger,
+.delete-link {
+  color: #aa3030;
+}
+ul {
+  list-style: none;
+  margin: 12px 0;
+  padding: 0;
+}
+li,
+.member-login-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 0;
+  border-bottom: 1px solid #e0dacf;
+}
+li span {
+  overflow-wrap: anywhere;
+}
+.avatar {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  border-radius: 50%;
+  background: var(--person);
+  color: #fff;
+}
+.member-login-row b {
+  flex: 1;
+}
+small,
+.connection-detail {
+  color: #625f59;
+}
+.form-stack {
+  display: grid;
+  gap: 16px;
+  max-width: 600px;
+}
+label {
+  display: grid;
+  gap: 6px;
+  font-weight: 600;
+}
+input,
+select,
+textarea {
+  width: 100%;
+  padding: 11px;
+  border: 1px solid #c9c3b8;
+  background: #fffdf8;
+  color: #151515;
+  border-radius: 6px;
+  font:
+    16px Archivo,
+    sans-serif;
+}
+input[type="color"] {
+  padding: 4px;
+  height: 45px;
+}
+.checkbox-label {
+  display: flex;
+  align-items: center;
+}
+input[type="checkbox"] {
+  width: auto;
+}
+.form-row,
+.form-actions {
+  display: flex;
+  gap: 14px;
+}
+.form-row > * {
+  flex: 1;
+  min-width: 0;
+}
+.form-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.form-error,
+[role="alert"] {
+  color: #a52b2b;
+  margin: 0;
+}
+.form-error:empty {
+  display: none;
+}
+.photo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 22px;
+}
+figure {
+  margin: 0;
+}
+figure img {
+  width: 100%;
+  aspect-ratio: 4/3;
+  object-fit: contain;
+  background: #e7e1d6;
+  border-radius: 8px;
+}
+figcaption {
+  margin: 8px 0;
+}
+details {
+  border-top: 1px solid #dfd9ce;
+  padding: 14px 0;
+}
+summary {
+  cursor: pointer;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+dialog {
+  width: min(620px, calc(100% - 32px));
+  max-height: 90vh;
+  overflow: auto;
+  border: 0;
+  border-radius: 15px;
+  padding: 36px;
+  background: #f2eee6;
+  box-shadow: 0 20px 80px #0004;
+}
+dialog::backdrop {
+  background: #0008;
+}
+.sheet-close {
+  position: absolute;
+  right: 12px;
+  top: 8px;
+  border: 0;
+  font-size: 25px;
+  padding: 0 7px;
+}
+.sheet-pad {
+  padding-top: 8px;
+}
+.label {
+  font-size: 12px;
+  text-transform: uppercase;
+  color: #625f59;
+}
+#toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100% - 32px);
+  border-radius: 10px;
+  background: #151515;
+  color: #fff;
+  padding: 14px 20px;
+  box-shadow: 0 8px 24px #0003;
+}
+@media (max-width: 560px) {
+  h1 {
+    font-size: 46px;
+  }
+  .form-row {
+    flex-direction: column;
+  }
+  #app {
+    padding: 20px 18px 60px;
+  }
+  dialog {
+    padding: 28px 20px;
+  }
+}
